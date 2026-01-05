@@ -1,5 +1,6 @@
 #![no_std]
-use sails_rs::{gstd::{calls::GStdRemoting, msg}, prelude::*};
+use gstd::msg;
+use sails_rs::prelude::*;
 
 pub mod services;
 pub mod states;
@@ -13,19 +14,19 @@ pub struct VnftManagerProgram;
 
 impl VnftManagerProgram {
     pub fn init_state(admin: ActorId) {
-        VNFTManagerService::<VnftClient<GStdRemoting>>::seed(admin);
+        VNFTManagerService::<VnftClient<()>>::seed(admin);
     }
 
     pub fn init_state_with_vnft_id(admin: ActorId, vnft_contract_id: ActorId) {
-        VNFTManagerService::<VnftClient<GStdRemoting>>::seed_with_contract_id(admin, vnft_contract_id);
+        VNFTManagerService::<VnftClient<()>>::seed_with_contract_id(admin, vnft_contract_id);
     }
 
     pub fn init_ticket_state(admin: ActorId) {
-        TicketService::<VnftClient<GStdRemoting>>::seed(admin);
+        TicketService::<VnftClient<()>>::seed(admin);
     }
 
     pub fn init_ticket_state_with_vnft(admin: ActorId, vnft_contract_id: ActorId) {
-        TicketService::<VnftClient<GStdRemoting>>::seed_with_vnft(admin, vnft_contract_id);
+        TicketService::<VnftClient<()>>::seed_with_vnft(admin, vnft_contract_id);
     }
 }
 
@@ -45,14 +46,13 @@ impl VnftManagerProgram {
         Self
     }
 
-    pub fn vnft_manager_svc(&self) -> VNFTManagerService<VnftClient<GStdRemoting>> {
-        let vnft_client = VnftClient::new(GStdRemoting);
+    pub fn vnft_manager_svc(&self) -> VNFTManagerService<VnftClient<()>> {
+        let vnft_client = VnftClient::new(());
         VNFTManagerService::new(vnft_client)
     }
 
-    #[route("TicketService")]
-    pub fn ticket_svc(&self) -> TicketService<VnftClient<GStdRemoting>> {
-        let vnft_client = VnftClient::new(GStdRemoting);
+    pub fn ticket_svc(&self) -> TicketService<VnftClient<()>> {
+        let vnft_client = VnftClient::new(());
         TicketService::new(vnft_client)
     }
 }

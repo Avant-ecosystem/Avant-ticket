@@ -1,10 +1,8 @@
 #![allow(static_mut_refs)] // Only to avoid the static variable mut reference warning
 
-use gstd::exec;
+use gstd::msg;
 // Necesary imports
-use sails_rs::{
-    calls::{Call, Query}, gstd::msg, prelude::*
-};
+use sails_rs::prelude::*;
 
 // Import the struct state (VFTManagerState)
 use crate::{
@@ -68,6 +66,7 @@ where VnftClient: Vnft { // We specify the type of the generic type (The client)
 
     // ## Add new a new admin
     // Only admins can add others admins
+    #[export]
     pub fn add_admin(&mut self, new_admin_address: ActorId) -> VNFTManagerEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -85,6 +84,7 @@ where VnftClient: Vnft { // We specify the type of the generic type (The client)
 
     // ## Change vnft contract id
     // Only the contract admins can perform this action
+    #[export]
     pub fn set_vft_contract_id(&mut self, vft_contract_id: ActorId) -> VNFTManagerEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -102,6 +102,7 @@ where VnftClient: Vnft { // We specify the type of the generic type (The client)
 
     // ## Mint a new nft to a user
     // Only the contract admins can perform this action
+    #[export]
     pub async fn mint_nft(&mut self, to: ActorId, token_metadata: TokenMetadata) -> VNFTManagerEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -140,6 +141,7 @@ where VnftClient: Vnft { // We specify the type of the generic type (The client)
 
     // ## Burn an nft from a user
     // Only the contract admins can perform this action
+    #[export]
     pub async fn burn_nft(&mut self, from: ActorId, token_id: U256) -> VNFTManagerEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -178,6 +180,7 @@ where VnftClient: Vnft { // We specify the type of the generic type (The client)
 
     // ## Transfer an nft to a new user
     // This command only works if the user approve the contract to transfer the nft
+    #[export]
     pub async fn transfer_from(&mut self, from: ActorId, to: ActorId, token_id: U256) -> VNFTManagerEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -236,6 +239,7 @@ where VnftClient: Vnft { // We specify the type of the generic type (The client)
         VNFTManagerEvents::TokenTransferred
     } 
 
+    #[export]
     pub async fn num_of_nfts_from_user(&self, user_address: ActorId) -> VNFTManagerQueryEvents {
         let state = self.state_ref();
 
@@ -265,6 +269,7 @@ where VnftClient: Vnft { // We specify the type of the generic type (The client)
         VNFTManagerQueryEvents::UserNumOfTokensOwned(user_num_of_tokens)
     }
 
+    #[export]
     pub async fn num_of_nfts_from_user_as_u128(&self, user_address: ActorId) -> VNFTManagerQueryEvents {
         let state = self.state_ref();
 
@@ -294,6 +299,7 @@ where VnftClient: Vnft { // We specify the type of the generic type (The client)
         VNFTManagerQueryEvents::UserNumOfTokensOwnedAsu128(user_num_of_tokens.as_u128())
     }
 
+    #[export]
     pub async fn nft_owner_by_token_id(&self, token_id: U256) -> VNFTManagerQueryEvents {
         let state = self.state_ref();
 
@@ -323,6 +329,7 @@ where VnftClient: Vnft { // We specify the type of the generic type (The client)
         VNFTManagerQueryEvents::NFTOwner(owner)
     }
 
+    #[export]
     pub async fn nft_address_approved(&self, token_id: U256) -> VNFTManagerQueryEvents {
         let state = self.state_ref();
 

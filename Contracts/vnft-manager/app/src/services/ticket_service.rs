@@ -1,16 +1,12 @@
 #![allow(static_mut_refs)]
 
-use gstd::exec;
-use sails_rs::{
-    calls::{Call, Query},
-    gstd::msg,
-    prelude::*,
-};
+use gstd::{exec, msg};
+use sails_rs::prelude::*;
 
 use crate::{
     clients::extended_vnft_client::{traits::Vnft, TokenMetadata},
     states::ticket_state::{
-        CommissionConfig, Event, ResaleConfig, Ticket, TicketState,
+        Event, ResaleConfig, Ticket, TicketState,
     },
 };
 
@@ -50,6 +46,7 @@ where
 
     /// Agrega un nuevo admin de plataforma
     /// Solo los admins pueden agregar otros admins
+    #[export]
     pub fn add_platform_admin(&mut self, new_admin: ActorId) -> TicketEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -68,6 +65,7 @@ where
 
     /// Agrega un escáner autorizado
     /// Solo admins de plataforma pueden agregar escáneres
+    #[export]
     pub fn add_authorized_scanner(&mut self, scanner: ActorId) -> TicketEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -86,6 +84,7 @@ where
 
     /// Configura el contrato NFT
     /// Solo admins de plataforma pueden configurarlo
+    #[export]
     pub fn set_vnft_contract(&mut self, vnft_contract_id: ActorId) -> TicketEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -102,6 +101,7 @@ where
 
     /// Crea un nuevo evento
     /// Solo admins de plataforma o el organizador pueden crear eventos
+    #[export]
     pub fn create_event(
         &mut self,
         organizer: ActorId,
@@ -147,6 +147,7 @@ where
 
     /// Actualiza la configuración de reventa de un evento
     /// Solo el organizador o admins pueden actualizar
+    #[export]
     pub fn update_resale_config(
         &mut self,
         event_id: u64,
@@ -169,6 +170,7 @@ where
 
     /// Actualiza la configuración de comisiones de un evento
     /// Solo el organizador o admins pueden actualizar
+    #[export]
     pub fn update_commission_config(
         &mut self,
         event_id: u64,
@@ -195,6 +197,7 @@ where
 
     /// Desactiva un evento
     /// Solo el organizador o admins pueden desactivar
+    #[export]
     pub fn deactivate_event(&mut self, event_id: u64) -> TicketEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -215,6 +218,7 @@ where
 
     /// Mintea un ticket individual
     /// Solo el organizador o admins pueden mintear
+    #[export]
     pub async fn mint_ticket(
         &mut self,
         event_id: u64,
@@ -278,6 +282,7 @@ where
 
     /// Mintea múltiples tickets en batch
     /// Solo el organizador o admins pueden mintear
+    #[export]
     pub async fn batch_mint_tickets(
         &mut self,
         event_id: u64,
@@ -347,6 +352,7 @@ where
 
     /// Lista un ticket para reventa
     /// Solo el dueño actual puede listar su ticket
+    #[export]
     pub fn list_ticket_for_resale(
         &mut self,
         ticket_id: U256,
@@ -385,6 +391,7 @@ where
 
     /// Compra un ticket en reventa
     /// El comprador debe enviar el pago junto con la transacción
+    #[export]
     pub async fn buy_resale_ticket(
         &mut self,
         ticket_id: U256,
@@ -499,6 +506,7 @@ where
 
     /// Marca un ticket como usado
     /// Solo escáneres autorizados o admins pueden marcar tickets como usados
+    #[export]
     pub fn mark_ticket_as_used(&mut self, ticket_id: U256) -> TicketEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -520,6 +528,7 @@ where
     }
 
     /// Marca múltiples tickets como usados (batch)
+    #[export]
     pub fn batch_mark_tickets_as_used(&mut self, ticket_ids: Vec<U256>) -> TicketEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -552,6 +561,7 @@ where
     /// Retira fondos acumulados de la plataforma
     /// Solo admins de plataforma pueden retirar
     /// NOTA: Esta función requiere implementación de gestión de balance del contrato
+    #[export]
     pub fn withdraw_platform_funds(&mut self, amount: u128, to: ActorId) -> TicketEvents {
         let state = self.state_mut();
         let caller = msg::source();
@@ -573,6 +583,7 @@ where
     // ==================== QUERIES ====================
 
     /// Obtiene información de un evento
+    #[export]
     pub fn get_event(&self, event_id: u64) -> TicketQueryEvents {
         let state = self.state_ref();
 
@@ -583,6 +594,7 @@ where
     }
 
     /// Obtiene información de un ticket
+    #[export]
     pub fn get_ticket(&self, ticket_id: U256) -> TicketQueryEvents {
         let state = self.state_ref();
 
@@ -593,6 +605,7 @@ where
     }
 
     /// Obtiene todos los tickets de un evento
+    #[export]
     pub fn get_event_tickets(&self, event_id: u64) -> TicketQueryEvents {
         let state = self.state_ref();
 
@@ -615,6 +628,7 @@ where
     }
 
     /// Obtiene todos los tickets de un usuario
+    #[export]
     pub fn get_user_tickets(&self, user: ActorId) -> TicketQueryEvents {
         let state = self.state_ref();
 
@@ -633,6 +647,7 @@ where
     }
 
     /// Obtiene el dueño de un ticket (desde el contrato NFT)
+    #[export]
     pub async fn get_ticket_owner(&self, ticket_id: U256) -> TicketQueryEvents {
         let state = self.state_ref();
 
