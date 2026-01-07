@@ -1,0 +1,25 @@
+[workspace]
+members = ["concert"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Sails-rs - Framework para Gear/Vara Network
+sails-rs = { git = "https://github.com/gear-foundation/sails", branch = "master" }
+sails-idl-gen = { git = "https://github.com/gear-foundation/sails", branch = "master" }
+sails-client-gen = { git = "https://github.com/gear-foundation/sails", branch = "master" }
+
+# Gstd - Gear Standard Library
+gstd = { git = "https://github.com/gear-foundation/gstd", branch = "master", features = ["debug"] }
+
+# Extended VMT - Variable Multi Token
+extended-vmt = { git = "https://github.com/gear-foundation/dapps", branch = "master", package = "extended-vmt" }
+extended-vmt-client = { git = "https://github.com/gear-foundation/dapps", branch = "master", package = "extended-vmt-client" }
+
+# Tokio para tests
+tokio = { version = "1.0", features = ["rt", "macros"] }
+
