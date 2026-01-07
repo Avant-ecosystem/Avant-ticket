@@ -292,8 +292,8 @@ impl TicketService {
             panic(TicketError::InvalidAmount);
         }
         
-        Self::validate_resale_config(&resale_config);
-        Self::validate_commission_config(&commission_config);
+        TicketService::validate_resale_config(&resale_config);
+        TicketService::validate_commission_config(&commission_config);
         
         let storage = self.get_mut();
         storage.event_id_counter += U256::one();
@@ -594,8 +594,11 @@ impl TicketService {
         
         let storage = self.get_mut();
         
-        let ticket = storage.tickets.get_mut(&ticket_id)
-            .ok_or_else(|| panic(TicketError::TicketNotFound))?;
+        let ticket = storage.tickets.get_mut(&ticket_id);
+        if ticket.is_none() {
+            panic(TicketError::TicketNotFound);
+        }
+        let ticket = ticket.unwrap();
         
         if ticket.used {
             panic(TicketError::TicketAlreadyUsed);
@@ -681,12 +684,15 @@ impl TicketService {
     ) {
         self.require_organizer();
         
-        Self::validate_resale_config(&resale_config);
+        TicketService::validate_resale_config(&resale_config);
         
         let storage = self.get_mut();
         
-        let event_config = storage.events.get_mut(&event_id)
-            .ok_or_else(|| panic(TicketError::EventNotFound))?;
+        let event_config = storage.events.get_mut(&event_id);
+        if event_config.is_none() {
+            panic(TicketError::EventNotFound);
+        }
+        let event_config = event_config.unwrap();
         
         // Validar permisos
         let caller = msg::source();
@@ -710,12 +716,15 @@ impl TicketService {
     ) {
         self.require_organizer();
         
-        Self::validate_commission_config(&commission_config);
+        TicketService::validate_commission_config(&commission_config);
         
         let storage = self.get_mut();
         
-        let event_config = storage.events.get_mut(&event_id)
-            .ok_or_else(|| panic(TicketError::EventNotFound))?;
+        let event_config = storage.events.get_mut(&event_id);
+        if event_config.is_none() {
+            panic(TicketError::EventNotFound);
+        }
+        let event_config = event_config.unwrap();
         
         // Validar permisos
         let caller = msg::source();
@@ -737,8 +746,11 @@ impl TicketService {
         
         let storage = self.get_mut();
         
-        let event_config = storage.events.get_mut(&event_id)
-            .ok_or_else(|| panic(TicketError::EventNotFound))?;
+        let event_config = storage.events.get_mut(&event_id);
+        if event_config.is_none() {
+            panic(TicketError::EventNotFound);
+        }
+        let event_config = event_config.unwrap();
         
         // Validar permisos
         let caller = msg::source();

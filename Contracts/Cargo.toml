@@ -5,49 +5,8 @@ resolver = "2"
 # Remove a member if it's used as a dependency in the workspace.
 
 members = [
-    "battle",
-    "battle/warrior/wasm",
-    #"battleship",
-    "car-races/car-1",
-    "car-races/car-2",
-    "car-races/car-3",
-    "car-races",
     "concert",
-    "dex",
-    "dynamic-nft",
-    "galactic-express",
-    "multisig-wallet",
-    "nft-marketplace",
-    "oracle",
-    "oracle/randomness",
-    "ping-pong",
-    "zk-mental-poker/contracts/poker-factory",
-    "zk-mental-poker/contracts/poker-factory/client",
-    "zk-mental-poker/contracts/pts",
-    "zk-mental-poker/contracts/pts/client",
-    "zk-mental-poker/contracts/poker",
-    "zk-mental-poker/contracts/poker/client",
-    "upgrade-proxy/counter",
-    "upgrade-proxy/upgrade-proxy",
-    #"rmrk",
-    #"rmrk/catalog",
-    #"rmrk/resource",
-    #"rmrk/state",
-    "staking",
-    "syndote/wasm",
-    "syndote/player/wasm",
-    #"tamagotchi",
-    #"tamagotchi/state",
-    #"tamagotchi-battle",
-    #"tamagotchi-battle/state",
-    #"tequila-train",
-    "varatube",
-    "tic-tac-toe",
-    "vara-man",
-    "w3bstreaming",
-    "zk-battleship/wasm",
-    "zk-mental-poker/contracts/zk-verification",
-    "zk-mental-poker/contracts/zk-verification/client",
+    
 ]
 
 [workspace.package]
@@ -63,26 +22,14 @@ publish = false
 # Local contracts
 # Keep in the lexicographic order!
 
-#battleship-bot.path = "battleship/bot"
-#rmrk-catalog.path = "rmrk/catalog"
-#tamagotchi.path = "tamagotchi"
 
 # Local states
 # Keep in the lexicographic order!
 
-#rmrk-state.path = "rmrk/state"
-#tamagotchi-battle-state.path = "tamagotchi-battle/state"
 
 # Local IO-crates
 # Keep in the lexicographic order!
 
-#battleship-io.path = "battleship/io"
-#rmrk-catalog-io.path = "rmrk/catalog/io"
-#rmrk-io.path = "rmrk/io"
-#rmrk-resource-io.path = "rmrk/resource/io"
-#tamagotchi-io.path = "tamagotchi/io"
-#tamagotchi-battle-io.path = "tamagotchi-battle/io"
-#tequila-train-io.path = "tequila-train/io"
 
 # Local libraries
 # Keep in the lexicographic order!
@@ -91,14 +38,14 @@ rmrk-types.path = "rmrk/types"
 
 # Gear
 
-gstd = "=1.9.1"
-gear-wasm-builder = "=1.9.1"
-gclient = "=1.9.1"
-gtest = "=1.9.1"
-gear-core = "=1.9.1"
-sails-idl-gen = "=0.9.1"
-sails-rs = "=0.9.1"
-sails-client-gen = "=0.9.1"
+gstd = "=1.9.2"
+gear-wasm-builder = "=1.9.2"
+gclient = "=1.9.2"
+gtest = "=1.9.2"
+gear-core = "=1.9.2"
+sails-idl-gen = "=0.9.2"
+sails-rs = "=0.9.2"
+sails-client-gen = "=0.9.2"
 session-service = { git = "https://github.com/gear-foundation/signless-gasless-session-service.git" }
 extended-vft-client = { git = "https://github.com/gear-foundation/standards/"}
 extended-vnft-client = { git = "https://github.com/gear-foundation/standards/"}
