@@ -1,25 +1,137 @@
 [workspace]
-members = ["concert"]
 resolver = "2"
 
+# Keep in the lexicographic order!
+# Remove a member if it's used as a dependency in the workspace.
+
+members = [
+    "battle",
+    "battle/warrior/wasm",
+    #"battleship",
+    "car-races/car-1",
+    "car-races/car-2",
+    "car-races/car-3",
+    "car-races",
+    "concert",
+    "dex",
+    "dynamic-nft",
+    "galactic-express",
+    "multisig-wallet",
+    "nft-marketplace",
+    "oracle",
+    "oracle/randomness",
+    "ping-pong",
+    "zk-mental-poker/contracts/poker-factory",
+    "zk-mental-poker/contracts/poker-factory/client",
+    "zk-mental-poker/contracts/pts",
+    "zk-mental-poker/contracts/pts/client",
+    "zk-mental-poker/contracts/poker",
+    "zk-mental-poker/contracts/poker/client",
+    "upgrade-proxy/counter",
+    "upgrade-proxy/upgrade-proxy",
+    #"rmrk",
+    #"rmrk/catalog",
+    #"rmrk/resource",
+    #"rmrk/state",
+    "staking",
+    "syndote/wasm",
+    "syndote/player/wasm",
+    #"tamagotchi",
+    #"tamagotchi/state",
+    #"tamagotchi-battle",
+    #"tamagotchi-battle/state",
+    #"tequila-train",
+    "varatube",
+    "tic-tac-toe",
+    "vara-man",
+    "w3bstreaming",
+    "zk-battleship/wasm",
+    "zk-mental-poker/contracts/zk-verification",
+    "zk-mental-poker/contracts/zk-verification/client",
+]
+
 [workspace.package]
-version = "0.1.0"
+homepage = "https://wiki.gear-tech.io/docs/examples/prerequisites"
+documentation = "https://dapps.gear.rs"
+authors = ["Gear Foundation <hello@gear.foundation>"]
+version = "1.1.0"
+license = "MIT"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+publish = false
 
 [workspace.dependencies]
-# Sails-rs - Framework para Gear/Vara Network
-sails-rs = { git = "https://github.com/gear-foundation/sails", branch = "master" }
-sails-idl-gen = { git = "https://github.com/gear-foundation/sails", branch = "master" }
-sails-client-gen = { git = "https://github.com/gear-foundation/sails", branch = "master" }
+# Local contracts
+# Keep in the lexicographic order!
 
-# Gstd - Gear Standard Library
-gstd = { git = "https://github.com/gear-foundation/gstd", branch = "master", features = ["debug"] }
+#battleship-bot.path = "battleship/bot"
+#rmrk-catalog.path = "rmrk/catalog"
+#tamagotchi.path = "tamagotchi"
 
-# Extended VMT - Variable Multi Token
-extended-vmt = { git = "https://github.com/gear-foundation/dapps", branch = "master", package = "extended-vmt" }
-extended-vmt-client = { git = "https://github.com/gear-foundation/dapps", branch = "master", package = "extended-vmt-client" }
+# Local states
+# Keep in the lexicographic order!
 
-# Tokio para tests
-tokio = { version = "1.0", features = ["rt", "macros"] }
+#rmrk-state.path = "rmrk/state"
+#tamagotchi-battle-state.path = "tamagotchi-battle/state"
 
+# Local IO-crates
+# Keep in the lexicographic order!
+
+#battleship-io.path = "battleship/io"
+#rmrk-catalog-io.path = "rmrk/catalog/io"
+#rmrk-io.path = "rmrk/io"
+#rmrk-resource-io.path = "rmrk/resource/io"
+#tamagotchi-io.path = "tamagotchi/io"
+#tamagotchi-battle-io.path = "tamagotchi-battle/io"
+#tequila-train-io.path = "tequila-train/io"
+
+# Local libraries
+# Keep in the lexicographic order!
+
+rmrk-types.path = "rmrk/types"
+
+# Gear
+
+gstd = "=1.9.1"
+gear-wasm-builder = "=1.9.1"
+gclient = "=1.9.1"
+gtest = "=1.9.1"
+gear-core = "=1.9.1"
+sails-idl-gen = "=0.9.1"
+sails-rs = "=0.9.1"
+sails-client-gen = "=0.9.1"
+session-service = { git = "https://github.com/gear-foundation/signless-gasless-session-service.git" }
+extended-vft-client = { git = "https://github.com/gear-foundation/standards/"}
+extended-vnft-client = { git = "https://github.com/gear-foundation/standards/"}
+extended-vmt-client = { git = "https://github.com/gear-foundation/standards/"}
+extended-vmt = { git = "https://github.com/gear-foundation/standards/"}
+extended-vft = { git = "https://github.com/gear-foundation/standards/"}
+extended-vnft = { git = "https://github.com/gear-foundation/standards/"}
+
+# External
+
+primitive-types = { version = "0.12", default-features = false }
+sp-core = { version = "21.0.0", default-features = false, features = ["full_crypto", "sp-externalities"] }
+sp-core-hashing = { version = "10", default-features = false }
+tokio = "1"
+hex-literal = "0.4"
+hex = { version = "0.4", default-features = false }
+schnorrkel = { version = "0.10", default-features = false, features = ["u64_backend"] }
+quote = "1"
+scale-info = { version = "2", default-features = false }
+parity-scale-codec = { version = "3", default-features = false }
+
+# ZK-specific dependencies
+ark-bls12-381 = "0.5.0"
+ark-ec = { version = "0.5", default-features = false }
+ark-ff = { version = "0.5", default-features = false }
+ark-scale = "=0.0.12"
+ark-serialize = "0.5.0"
+ark-ed-on-bls12-381-bandersnatch = { version = "0.5", default-features = false }
+ark-std = "0.5"
+gbuiltin-bls381 = "1.8.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+bincode = "2.0.1"
+rand = "0.9.1"
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
