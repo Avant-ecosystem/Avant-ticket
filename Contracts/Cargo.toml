@@ -6,7 +6,7 @@ resolver = "2"
 
 members = [
     "concert",
-    
+    "ticket-marketplace",
 ]
 
 [workspace.package]
