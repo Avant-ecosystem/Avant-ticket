@@ -1,8 +1,0 @@
-[package]
-name = "app"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-sails-rs.workspace = true
-gstd.workspace = true
