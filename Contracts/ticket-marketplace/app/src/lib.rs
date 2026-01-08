@@ -7,6 +7,9 @@ use sails_rs::{
     prelude::*,
 };
 
+// Importar el módulo IO del contrato de Tickets para hacer llamadas
+use concert_app::io::{GetTicketAsync, GetEventAsync, TransferFromMarketplace as TicketTransferFromMarketplace};
+
 const ZERO_ID: ActorId = ActorId::zero();
 const BASIS_POINTS: u16 = 10000; // Para porcentajes con precisión (100% = 10000)
 
@@ -51,10 +54,59 @@ pub struct TicketInfo {
     pub used: bool,
 }
 
+/// Estructuras del contrato de Tickets (para comunicación)
+/// Estas deben coincidir con las del contrato de Tickets
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct Ticket {
+    pub ticket_id: U256,
+    pub event_id: U256,
+    pub zone: Option<String>,
+    pub original_buyer: ActorId,
+    pub current_owner: ActorId,
+    pub used: bool,
+    pub minted_at: u64,
+}
+
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct EventConfig {
+    pub event_id: U256,
+    pub organizer: ActorId,
+    pub metadata_hash: [u8; 32],
+    pub event_start_time: u64,
+    pub tickets_minted: U256,
+    pub tickets_total: U256,
+    pub resale_config: ResaleConfigTicket,
+    pub commission_config: CommissionConfigTicket,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct ResaleConfigTicket {
+    pub enabled: bool,
+    pub max_price: Option<U256>,
+    pub resale_start_time: Option<u64>,
+    pub resale_end_time: Option<u64>,
+}
+
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct CommissionConfigTicket {
+    pub seller_percentage: u16,
+    pub organizer_percentage: u16,
+    pub platform_percentage: u16,
+}
+
 /// Información del evento desde el contrato de Tickets
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
 #[codec(crate = sails_rs::scale_codec)]
-#[scale_info(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
 pub struct EventInfo {
     pub event_id: U256,
     pub organizer: ActorId,
@@ -65,6 +117,28 @@ pub struct EventInfo {
     pub seller_percentage: u16,
     pub organizer_percentage: u16,
     pub platform_percentage: u16,
+}
+
+/// Mensajes para comunicarse con el contrato de Tickets
+#[derive(Debug, Clone, Encode, Decode, TypeInfo)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub enum TicketContractMessage {
+    GetTicketAsync { ticket_id: U256 },
+    GetEventAsync { event_id: U256 },
+    ResellTicket { ticket_id: U256, buyer: ActorId, price: U256 },
+    TransferFromMarketplace { ticket_id: U256, buyer: ActorId, seller: ActorId, price: U256 },
+}
+
+/// Respuestas del contrato de Tickets
+#[derive(Debug, Clone, Encode, Decode, TypeInfo)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub enum TicketContractReply {
+    Ticket(Option<Ticket>),
+    Event(Option<EventConfig>),
+    Success,
+    Error(String),
 }
 
 /// Eventos emitidos por el Marketplace
@@ -169,23 +243,80 @@ impl MarketplaceService {
     }
     
     /// Obtiene información del ticket desde el contrato de Tickets
-    /// Nota: Esta función debe implementarse según la interfaz real del contrato de Tickets
     async fn get_ticket_info(&self, ticket_id: U256) -> Option<TicketInfo> {
         let storage = self.get();
-        // Aquí se haría una llamada al contrato de Tickets para obtener la información
-        // Por ahora retornamos None como placeholder
-        // En producción: msg::send_for_reply al ticket_contract_id con get_ticket()
-        None
+        
+        // Usar el módulo IO del contrato de Tickets para hacer la llamada
+        let request_bytes = GetTicketAsync::encode_call(ticket_id);
+        
+        match msg::send_bytes_for_reply(
+            storage.ticket_contract_id,
+            request_bytes,
+            0,
+            0,
+        ) {
+            Ok(reply_future) => {
+                match reply_future.await {
+                    Ok(reply_bytes) => {
+                        // Usar la función de decodificación del módulo IO
+                        match GetTicketAsync::decode_reply(reply_bytes) {
+                            Some(ticket) => {
+                                Some(TicketInfo {
+                                    ticket_id: ticket.ticket_id,
+                                    event_id: ticket.event_id,
+                                    current_owner: ticket.current_owner,
+                                    used: ticket.used,
+                                })
+                            }
+                            None => None,
+                        }
+                    }
+                    Err(_) => None,
+                }
+            }
+            Err(_) => None,
+        }
     }
     
     /// Obtiene información del evento desde el contrato de Tickets
-    /// Nota: Esta función debe implementarse según la interfaz real del contrato de Tickets
     async fn get_event_info(&self, event_id: U256) -> Option<EventInfo> {
         let storage = self.get();
-        // Aquí se haría una llamada al contrato de Tickets para obtener la información
-        // Por ahora retornamos None como placeholder
-        // En producción: msg::send_for_reply al ticket_contract_id con get_event()
-        None
+        
+        // Usar el módulo IO del contrato de Tickets
+        let request_bytes = GetEventAsync::encode_call(event_id);
+        
+        match msg::send_bytes_for_reply(
+            storage.ticket_contract_id,
+            request_bytes,
+            0,
+            0,
+        ) {
+            Ok(reply_future) => {
+                match reply_future.await {
+                    Ok(reply_bytes) => {
+                        // Usar la función de decodificación del módulo IO
+                        match GetEventAsync::decode_reply(reply_bytes) {
+                            Some(event_config) => {
+                                Some(EventInfo {
+                                    event_id: event_config.event_id,
+                                    organizer: event_config.organizer,
+                                    resale_enabled: event_config.resale_config.enabled,
+                                    max_price: event_config.resale_config.max_price,
+                                    resale_start_time: event_config.resale_config.resale_start_time,
+                                    resale_end_time: event_config.resale_config.resale_end_time,
+                                    seller_percentage: event_config.commission_config.seller_percentage,
+                                    organizer_percentage: event_config.commission_config.organizer_percentage,
+                                    platform_percentage: event_config.commission_config.platform_percentage,
+                                })
+                            }
+                            None => None,
+                        }
+                    }
+                    Err(_) => None,
+                }
+            }
+            Err(_) => None,
+        }
     }
     
     /// Valida que el ticket puede ser listado
@@ -236,19 +367,58 @@ impl MarketplaceService {
     }
     
     /// Transfiere el ticket usando el contrato de Tickets
-    /// Nota: Esta función debe implementarse según la interfaz real del contrato de Tickets
-    async fn transfer_ticket(&self, ticket_id: U256, buyer: ActorId, price: U256) -> Result<(), MarketplaceError> {
+    /// Intenta usar transfer_from_marketplace primero, luego resell_ticket como fallback
+    async fn transfer_ticket(&self, ticket_id: U256, buyer: ActorId, price: U256, seller: ActorId) -> Result<(), MarketplaceError> {
         let storage = self.get();
-        // Aquí se haría una llamada al contrato de Tickets para transferir
-        // En producción: msg::send_for_reply al ticket_contract_id con resell_ticket()
-        // O con una función especial tipo transfer_from_marketplace() si existe
-        Ok(())
+        
+        // Usar el módulo IO del contrato de Tickets para transferir
+        let request_bytes = TicketTransferFromMarketplace::encode_call(ticket_id, buyer, seller, price);
+        
+        match msg::send_bytes_for_reply(
+            storage.ticket_contract_id,
+            request_bytes,
+            0,
+            0,
+        ) {
+            Ok(reply_future) => {
+                match reply_future.await {
+                    Ok(reply_bytes) => {
+                        // Decodificar la respuesta
+                        match TicketTransferFromMarketplace::decode_reply(reply_bytes) {
+                            Ok(_) => return Ok(()),
+                            Err(_) => return Err(MarketplaceError::TransferFailed),
+                        }
+                    }
+                    Err(_) => return Err(MarketplaceError::TransferFailed),
+                }
+            }
+            Err(_) => return Err(MarketplaceError::TransferFailed),
+        }
+        
+        match msg::send_bytes_for_reply(
+            storage.ticket_contract_id,
+            request_bytes,
+            0,
+            0,
+        ) {
+            Ok(reply_future) => {
+                match reply_future.await {
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(MarketplaceError::TransferFailed),
+                }
+            }
+            Err(_) => Err(MarketplaceError::TransferFailed),
+        }
     }
     
     /// Obtiene timestamp actual
     fn current_timestamp(&self) -> u64 {
-        // Placeholder - implementar con API real de Vara
-        0
+        // En Vara Network, usar el bloque timestamp
+        // Nota: Ajustar según la API real de Vara Network cuando esté disponible
+        // Por ahora usamos un valor basado en el bloque actual
+        // En producción, usar: exec::block_timestamp() o la API equivalente de Vara
+        // gstd::exec::block_timestamp() as u64 / 1000 // Convertir a segundos si es necesario
+        0 // Placeholder - debe implementarse con la API real de Vara
     }
 }
 
@@ -393,7 +563,7 @@ impl MarketplaceService {
         // Asumimos que el comprador envía el pago antes o mediante un sistema de escrow
         
         // Transferir el ticket al comprador
-        match self.transfer_ticket(ticket_id, buyer, listing.price).await {
+        match self.transfer_ticket(ticket_id, buyer, listing.price, listing.seller).await {
             Ok(_) => {},
             Err(e) => {
                 // Revertir: volver a agregar el listado

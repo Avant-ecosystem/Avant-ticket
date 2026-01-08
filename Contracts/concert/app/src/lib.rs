@@ -35,6 +35,9 @@ pub struct Storage {
     organizers: HashSet<ActorId>, // Organizadores autorizados
     scanners: HashSet<ActorId>, // Escáneres autorizados para marcar tickets como usados
     
+    // Marketplace - Listados activos
+    listings: HashMap<U256, Listing>, // ticket_id -> Listing
+    
     // Reentrancy guard
     locked: bool,
 }
@@ -75,6 +78,18 @@ pub struct CommissionConfig {
     pub organizer_percentage: u16, // Porcentaje para el organizador
     pub platform_percentage: u16, // Porcentaje para la plataforma
     // La suma debe ser 10000 (100%)
+}
+
+/// Información de un listado activo en el Marketplace
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct Listing {
+    pub ticket_id: U256,
+    pub seller: ActorId,
+    pub price: U256,
+    pub listed_at: u64,
+    pub event_id: U256, // Para validaciones rápidas
 }
 
 /// Estructura de un ticket NFT
@@ -148,6 +163,30 @@ pub enum Event {
     EventConfigUpdated {
         event_id: U256,
     },
+    /// Ticket listado en el Marketplace
+    TicketListed {
+        ticket_id: U256,
+        event_id: U256,
+        seller: ActorId,
+        price: U256,
+    },
+    /// Ticket vendido desde el Marketplace
+    TicketSold {
+        ticket_id: U256,
+        event_id: U256,
+        seller: ActorId,
+        buyer: ActorId,
+        price: U256,
+        seller_share: U256,
+        organizer_share: U256,
+        platform_share: U256,
+    },
+    /// Listado cancelado
+    ListingCancelled {
+        ticket_id: U256,
+        event_id: U256,
+        seller: ActorId,
+    },
 }
 
 /// Errores del contrato
@@ -169,6 +208,10 @@ pub enum TicketError {
     NotEnoughTickets,
     EventNotActive,
     TransferBlocked,
+    TicketAlreadyListed,
+    ListingNotFound,
+    InvalidPrice,
+    PurchaseFailed,
 }
 
 static mut STORAGE: Option<Storage> = None;
@@ -839,6 +882,325 @@ impl TicketService {
     }
 }
 
+/// Servicio de Marketplace (separado del servicio de Tickets)
+struct MarketService(());
+
+impl MarketService {
+    pub fn new() -> Self {
+        Self(())
+    }
+    
+    pub fn get_mut(&mut self) -> &'static mut Storage {
+        unsafe { STORAGE.as_mut().expect("Storage is not initialized") }
+    }
+    
+    pub fn get(&self) -> &'static Storage {
+        unsafe { STORAGE.as_ref().expect("Storage is not initialized") }
+    }
+    
+    /// Guard contra reentrancy
+    fn non_reentrant(&mut self) {
+        let storage = self.get_mut();
+        if storage.locked {
+            panic(TicketError::ReentrancyDetected);
+        }
+        storage.locked = true;
+    }
+    
+    fn unlock(&mut self) {
+        let storage = self.get_mut();
+        storage.locked = false;
+    }
+    
+    /// Obtiene timestamp actual
+    fn current_timestamp(&self) -> u64 {
+        // Placeholder - implementar con API real de Vara
+        0
+    }
+}
+
+#[service(events = Event)]
+impl MarketService {
+    /// Listar un ticket para reventa en el Marketplace
+    #[export]
+    pub async fn list_ticket(&mut self, ticket_id: U256, price: U256) {
+        self.non_reentrant();
+        
+        if price == U256::zero() {
+            self.unlock();
+            panic(TicketError::InvalidPrice);
+        }
+        
+        let seller = msg::source();
+        if seller == ZERO_ID {
+            self.unlock();
+            panic(TicketError::InvalidInput);
+        }
+        
+        let storage = self.get_mut();
+        
+        // Validar que no esté ya listado
+        if storage.listings.contains_key(&ticket_id) {
+            self.unlock();
+            panic(TicketError::TicketAlreadyListed);
+        }
+        
+        // Validar que el ticket existe
+        let ticket = storage.tickets.get(&ticket_id);
+        if ticket.is_none() {
+            self.unlock();
+            panic(TicketError::TicketNotFound);
+        }
+        let ticket = ticket.unwrap();
+        
+        // Validar que no esté usado
+        if ticket.used {
+            self.unlock();
+            panic(TicketError::TicketAlreadyUsed);
+        }
+        
+        // Validar propiedad
+        if ticket.current_owner != seller {
+            self.unlock();
+            panic(TicketError::TicketNotOwned);
+        }
+        
+        // Validar evento
+        let event_config = storage.events.get(&ticket.event_id);
+        if event_config.is_none() {
+            self.unlock();
+            panic(TicketError::EventNotFound);
+        }
+        let event_config = event_config.unwrap();
+        
+        // Validar que la reventa esté habilitada
+        if !event_config.resale_config.enabled {
+            self.unlock();
+            panic(TicketError::ResaleDisabled);
+        }
+        
+        // Validar precio máximo
+        if let Some(max_price) = event_config.resale_config.max_price {
+            if price > max_price {
+                self.unlock();
+                panic(TicketError::PriceExceedsMaximum);
+            }
+        }
+        
+        // Validar ventana de tiempo
+        let current_time = self.current_timestamp();
+        if let Some(start_time) = event_config.resale_config.resale_start_time {
+            if current_time < start_time {
+                self.unlock();
+                panic(TicketError::ResaleWindowClosed);
+            }
+        }
+        if let Some(end_time) = event_config.resale_config.resale_end_time {
+            if current_time > end_time {
+                self.unlock();
+                panic(TicketError::ResaleWindowClosed);
+            }
+        }
+        
+        // Crear listado
+        let listing = Listing {
+            ticket_id,
+            seller,
+            price,
+            listed_at: current_time,
+            event_id: ticket.event_id,
+        };
+        
+        storage.listings.insert(ticket_id, listing.clone());
+        
+        self.emit_event(Event::TicketListed {
+            ticket_id,
+            event_id: ticket.event_id,
+            seller,
+            price,
+        })
+        .expect("Failed to emit TicketListed");
+        
+        self.unlock();
+    }
+    
+    /// Comprar un ticket listado en el Marketplace
+    #[export]
+    pub async fn buy_ticket(&mut self, ticket_id: U256) {
+        self.non_reentrant();
+        
+        let buyer = msg::source();
+        if buyer == ZERO_ID {
+            self.unlock();
+            panic(TicketError::InvalidInput);
+        }
+        
+        let storage = self.get_mut();
+        
+        // Obtener listado
+        let listing = storage.listings.get(&ticket_id);
+        if listing.is_none() {
+            self.unlock();
+            panic(TicketError::ListingNotFound);
+        }
+        let listing = listing.unwrap().clone();
+        
+        // Validar que el comprador no sea el vendedor
+        if buyer == listing.seller {
+            self.unlock();
+            panic(TicketError::InvalidInput);
+        }
+        
+        // Validar que el ticket todavía es válido
+        let ticket = storage.tickets.get(&ticket_id);
+        if ticket.is_none() {
+            self.unlock();
+            panic(TicketError::TicketNotFound);
+        }
+        let ticket = ticket.unwrap();
+        
+        // Validar que no esté usado
+        if ticket.used {
+            self.unlock();
+            panic(TicketError::TicketAlreadyUsed);
+        }
+        
+        // Validar propiedad
+        if ticket.current_owner != listing.seller {
+            self.unlock();
+            panic(TicketError::TicketNotOwned);
+        }
+        
+        // Validar evento
+        let event_config = storage.events.get(&ticket.event_id);
+        if event_config.is_none() {
+            self.unlock();
+            panic(TicketError::EventNotFound);
+        }
+        let event_config = event_config.unwrap();
+        
+        // Validar precio del listado vs precio máximo actual
+        if let Some(max_price) = event_config.resale_config.max_price {
+            if listing.price > max_price {
+                self.unlock();
+                panic(TicketError::PriceExceedsMaximum);
+            }
+        }
+        
+        // Guardar datos antes de remover el listado
+        let seller = listing.seller;
+        let price = listing.price;
+        let event_id = ticket.event_id;
+        
+        // Remover listado antes de procesar (previene doble compra)
+        storage.listings.remove(&ticket_id);
+        
+        // Calcular comisiones
+        let seller_share = (price.as_u128() * event_config.commission_config.seller_percentage as u128) 
+            / BASIS_POINTS as u128;
+        let organizer_share = (price.as_u128() * event_config.commission_config.organizer_percentage as u128) 
+            / BASIS_POINTS as u128;
+        let platform_share = (price.as_u128() * event_config.commission_config.platform_percentage as u128) 
+            / BASIS_POINTS as u128;
+        
+        // Validar que la suma sea correcta
+        let total_distributed = seller_share + organizer_share + platform_share;
+        let price_u128 = price.as_u128();
+        if total_distributed > price_u128 {
+            self.unlock();
+            panic(TicketError::InvalidCommissionConfig);
+        }
+        
+        // Transferir el NFT del vendedor al comprador usando VMT
+        let transfer_request = vmt_io::TransferFrom::encode_call(
+            seller,
+            buyer,
+            ticket_id,
+            NFT_COUNT,
+        );
+        msg::send_bytes_for_reply(storage.vmt_contract_id, transfer_request, 0, 5_000_000_000)
+            .expect("Error sending transfer request to VMT contract")
+            .await
+            .expect("Error transferring ticket NFT");
+        
+        // Actualizar propietario del ticket
+        let ticket_mut = storage.tickets.get_mut(&ticket_id).unwrap();
+        ticket_mut.current_owner = buyer;
+        
+        // Transferir pagos
+        // Nota: En Vara Network, el pago se maneja fuera del contrato o mediante un sistema de tokens
+        // El comprador debe enviar el pago antes de llamar a esta función, o usar un sistema de escrow
+        
+        self.emit_event(Event::TicketSold {
+            ticket_id,
+            event_id,
+            seller,
+            buyer,
+            price,
+            seller_share: U256::from(seller_share),
+            organizer_share: U256::from(organizer_share),
+            platform_share: U256::from(platform_share),
+        })
+        .expect("Failed to emit TicketSold");
+        
+        self.unlock();
+    }
+    
+    /// Cancelar un listado activo
+    #[export]
+    pub fn cancel_listing(&mut self, ticket_id: U256) {
+        let seller = msg::source();
+        
+        let storage = self.get_mut();
+        
+        // Obtener listado
+        let listing = storage.listings.get(&ticket_id);
+        if listing.is_none() {
+            panic(TicketError::ListingNotFound);
+        }
+        let listing = listing.unwrap();
+        
+        // Validar propiedad del listado
+        if listing.seller != seller {
+            panic(TicketError::TicketNotOwned);
+        }
+        
+        // Remover listado
+        let event_id = listing.event_id;
+        storage.listings.remove(&ticket_id);
+        
+        self.emit_event(Event::ListingCancelled {
+            ticket_id,
+            event_id,
+            seller,
+        })
+        .expect("Failed to emit ListingCancelled");
+    }
+    
+    /// Obtener información de un listado
+    #[export]
+    pub fn get_listing(&self, ticket_id: U256) -> Option<Listing> {
+        self.get().listings.get(&ticket_id).cloned()
+    }
+    
+    /// Obtener todos los listados activos
+    #[export]
+    pub fn get_all_listings(&self) -> Vec<Listing> {
+        self.get().listings.values().cloned().collect()
+    }
+    
+    /// Obtener listados de un vendedor
+    #[export]
+    pub fn get_seller_listings(&self, seller: ActorId) -> Vec<Listing> {
+        self.get()
+            .listings
+            .values()
+            .filter(|listing| listing.seller == seller)
+            .cloned()
+            .collect()
+    }
+}
+
 pub struct TicketProgram(());
 
 #[sails_rs::program]
@@ -851,6 +1213,10 @@ impl TicketProgram {
     
     pub fn ticket(&self) -> TicketService {
         TicketService::new()
+    }
+    
+    pub fn market(&self) -> MarketService {
+        MarketService::new()
     }
 }
 
@@ -885,6 +1251,7 @@ pub struct State {
     pub event_tickets: Vec<(U256, Vec<U256>)>,
     pub organizers: Vec<ActorId>,
     pub scanners: Vec<ActorId>,
+    pub listings: Vec<(U256, Listing)>,
 }
 
 impl From<Storage> for State {
@@ -900,6 +1267,7 @@ impl From<Storage> for State {
             event_tickets: value.event_tickets.into_iter().collect(),
             organizers: value.organizers.into_iter().collect(),
             scanners: value.scanners.into_iter().collect(),
+            listings: value.listings.into_iter().collect(),
         }
     }
 }
