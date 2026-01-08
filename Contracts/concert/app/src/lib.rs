@@ -2,7 +2,7 @@
 #![allow(static_mut_refs)]
 use core::fmt::Debug;
 use extended_vmt_client::vmt::io as vmt_io;
-use gstd::{ext, format, msg};
+use gstd::{ext, format, msg, exec};
 use sails_rs::{
     collections::{HashMap, HashSet},
     prelude::*,
@@ -302,13 +302,9 @@ impl TicketService {
     }
     
     /// Obtiene timestamp actual
-    fn current_timestamp(&self) -> u64 {
-        // En Vara Network, usar el bloque timestamp
-        // Nota: Ajustar según la API real de Vara Network cuando esté disponible
-        // Por ahora usamos un valor basado en el bloque actual
-        // En producción, usar: exec::block_timestamp() o la API equivalente de Vara
-        0 // Placeholder - debe implementarse con la API real de Vara
-    }
+fn current_timestamp(&self) -> u64 {
+    exec::block_timestamp()
+}
 }
 
 #[service(events = Event)]
@@ -913,10 +909,9 @@ impl MarketService {
     }
     
     /// Obtiene timestamp actual
-    fn current_timestamp(&self) -> u64 {
-        // Placeholder - implementar con API real de Vara
-        0
-    }
+fn current_timestamp(&self) -> u64 {
+    exec::block_timestamp()
+}
 }
 
 #[service(events = Event)]
