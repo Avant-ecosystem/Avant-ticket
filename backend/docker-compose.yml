@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: avant-ticket-postgres
+    environment:
+      POSTGRES_USER: avant_user
+      POSTGRES_PASSWORD: avant_password
+      POSTGRES_DB: avant_ticket
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avant_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: avant-ticket-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: avant-ticket-backend
+    environment:
+      DATABASE_URL: postgresql://avant_user:avant_password@postgres:5432/avant_ticket?schema=public
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      QR_SECRET_KEY: ${QR_SECRET_KEY:-change-me-in-production}
+      REDIS_URL: redis://redis:6379
+      PORT: 3000
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3001}
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./prisma:/app/prisma
+    command: sh -c "npx prisma generate && npx prisma migrate deploy && node dist/main.js"
+
+volumes:
+  postgres_data:
+  redis_data:
+

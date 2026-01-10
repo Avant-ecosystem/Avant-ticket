@@ -1,0 +1,299 @@
+/// Configuración de reventa
+type ResaleConfig = struct {
+  enabled: bool,
+  max_price: opt u256,
+  resale_start_time: opt u64,
+  resale_end_time: opt u64,
+};
+
+/// Configuración de comisiones
+type CommissionConfig = struct {
+  seller_percentage: u16,
+  organizer_percentage: u16,
+  platform_percentage: u16,
+};
+
+/// Configuración de un evento
+type EventConfig = struct {
+  event_id: u256,
+  organizer: actor_id,
+  metadata_hash: [u8, 32],
+  event_start_time: u64,
+  tickets_minted: u256,
+  tickets_total: u256,
+  resale_config: ResaleConfig,
+  commission_config: CommissionConfig,
+  active: bool,
+};
+
+/// Estadísticas de un evento
+type EventStats = struct {
+  event_id: u256,
+  tickets_total: u256,
+  tickets_minted: u256,
+  tickets_used: u64,
+  active: bool,
+};
+
+/// Estado público del contrato para consultas
+type State = struct {
+  admin: actor_id,
+  platform_fee_recipient: actor_id,
+  vmt_contract_id: actor_id,
+  event_id_counter: u256,
+  ticket_id_counter: u256,
+  events: vec struct { u256, EventConfig },
+  tickets: vec struct { u256, Ticket },
+  event_tickets: vec struct { u256, vec u256 },
+  organizers: vec actor_id,
+  scanners: vec actor_id,
+  listings: vec struct { u256, Listing },
+};
+
+/// Estructura de un ticket NFT
+type Ticket = struct {
+  ticket_id: u256,
+  event_id: u256,
+  zone: opt str,
+  original_buyer: actor_id,
+  current_owner: actor_id,
+  used: bool,
+  minted_at: u64,
+};
+
+/// Información de un listado activo en el Marketplace
+type Listing = struct {
+  ticket_id: u256,
+  seller: actor_id,
+  price: u256,
+  listed_at: u64,
+  event_id: u256,
+};
+
+constructor {
+  New : (admin: actor_id, vmt_contract: actor_id, platform_fee_recipient: actor_id);
+};
+
+service Ticket {
+  /// Agregar organizador
+  /// Solo admin
+  AddOrganizer : (organizer: actor_id) -> null;
+  /// Agregar escáner
+  /// Solo admin
+  AddScanner : (scanner: actor_id) -> null;
+  /// Crear un nuevo evento
+  /// Solo admin u organizador autorizado
+  CreateEvent : (organizer: actor_id, metadata_hash: [u8, 32], event_start_time: u64, tickets_total: u256, resale_config: ResaleConfig, commission_config: CommissionConfig) -> null;
+  /// Marcar un ticket como usado
+  /// Solo escáner autorizado o admin
+  MarkTicketUsed : (ticket_id: u256) -> null;
+  /// Mintear tickets en venta primaria (batch minting)
+  /// Solo organizador del evento o admin
+  MintTickets : (event_id: u256, buyer: actor_id, amount: u256, zones: vec opt str) -> null;
+  /// Remover organizador
+  /// Solo admin
+  RemoveOrganizer : (organizer: actor_id) -> null;
+  /// Remover escáner
+  /// Solo admin
+  RemoveScanner : (scanner: actor_id) -> null;
+  /// Revender un ticket
+  /// Solo el propietario actual puede revender
+  ResellTicket : (ticket_id: u256, buyer: actor_id, price: u256) -> null;
+  /// Desactivar/activar evento
+  /// Solo organizador del evento o admin
+  SetEventActive : (event_id: u256, active: bool) -> null;
+  /// Actualizar configuración de comisiones de un evento
+  /// Solo organizador del evento o admin
+  UpdateCommissionConfig : (event_id: u256, commission_config: CommissionConfig) -> null;
+  /// Actualizar configuración de reventa de un evento
+  /// Solo organizador del evento o admin
+  UpdateResaleConfig : (event_id: u256, resale_config: ResaleConfig) -> null;
+  /// Obtener configuración de un evento
+  query GetEvent : (event_id: u256) -> opt EventConfig;
+  /// Obtener estadísticas de un evento
+  query GetEventStats : (event_id: u256) -> opt EventStats;
+  /// Obtener tickets de un evento
+  query GetEventTickets : (event_id: u256) -> vec u256;
+  /// Obtener estado completo del contrato
+  query GetStorage : () -> State;
+  /// Obtener información de un ticket
+  query GetTicket : (ticket_id: u256) -> opt Ticket;
+  /// Obtener tickets de un usuario
+  query GetUserTickets : (user: actor_id) -> vec Ticket;
+  /// Verificar si una dirección es organizador
+  query IsOrganizer : (address: actor_id) -> bool;
+  /// Verificar si una dirección es escáner
+  query IsScanner : (address: actor_id) -> bool;
+
+  events {
+    /// Evento creado
+    EventCreated: struct {
+      event_id: u256,
+      organizer: actor_id,
+      metadata_hash: [u8, 32],
+      event_start_time: u64,
+    };
+    /// Tickets minteados en venta primaria
+    TicketsMinted: struct {
+      event_id: u256,
+      ticket_ids: vec u256,
+      buyer: actor_id,
+      amount: u256,
+    };
+    /// Ticket revendido
+    TicketResold: struct {
+      ticket_id: u256,
+      event_id: u256,
+      seller: actor_id,
+      buyer: actor_id,
+      price: u256,
+      seller_share: u256,
+      organizer_share: u256,
+      platform_share: u256,
+    };
+    /// Ticket marcado como usado
+    TicketUsed: struct {
+      ticket_id: u256,
+      event_id: u256,
+      scanner: actor_id,
+    };
+    /// Organizador agregado
+    OrganizerAdded: struct {
+      organizer: actor_id
+    };
+    /// Organizador removido
+    OrganizerRemoved: struct {
+      organizer: actor_id
+    };
+    /// Escáner agregado
+    ScannerAdded: struct {
+      scanner: actor_id
+    };
+    /// Escáner removido
+    ScannerRemoved: struct {
+      scanner: actor_id
+    };
+    /// Configuración de evento actualizada
+    EventConfigUpdated: struct {
+      event_id: u256
+    };
+    /// Ticket listado en el Marketplace
+    TicketListed: struct {
+      ticket_id: u256,
+      event_id: u256,
+      seller: actor_id,
+      price: u256,
+    };
+    /// Ticket vendido desde el Marketplace
+    TicketSold: struct {
+      ticket_id: u256,
+      event_id: u256,
+      seller: actor_id,
+      buyer: actor_id,
+      price: u256,
+      seller_share: u256,
+      organizer_share: u256,
+      platform_share: u256,
+    };
+    /// Listado cancelado
+    ListingCancelled: struct {
+      ticket_id: u256,
+      event_id: u256,
+      seller: actor_id,
+    };
+  }
+};
+
+service Market {
+  /// Comprar un ticket listado en el Marketplace
+  BuyTicket : (ticket_id: u256) -> null;
+  /// Cancelar un listado activo
+  CancelListing : (ticket_id: u256) -> null;
+  /// Listar un ticket para reventa en el Marketplace
+  ListTicket : (ticket_id: u256, price: u256) -> null;
+  /// Obtener todos los listados activos
+  query GetAllListings : () -> vec Listing;
+  /// Obtener información de un listado
+  query GetListing : (ticket_id: u256) -> opt Listing;
+  /// Obtener listados de un vendedor
+  query GetSellerListings : (seller: actor_id) -> vec Listing;
+
+  events {
+    /// Evento creado
+    EventCreated: struct {
+      event_id: u256,
+      organizer: actor_id,
+      metadata_hash: [u8, 32],
+      event_start_time: u64,
+    };
+    /// Tickets minteados en venta primaria
+    TicketsMinted: struct {
+      event_id: u256,
+      ticket_ids: vec u256,
+      buyer: actor_id,
+      amount: u256,
+    };
+    /// Ticket revendido
+    TicketResold: struct {
+      ticket_id: u256,
+      event_id: u256,
+      seller: actor_id,
+      buyer: actor_id,
+      price: u256,
+      seller_share: u256,
+      organizer_share: u256,
+      platform_share: u256,
+    };
+    /// Ticket marcado como usado
+    TicketUsed: struct {
+      ticket_id: u256,
+      event_id: u256,
+      scanner: actor_id,
+    };
+    /// Organizador agregado
+    OrganizerAdded: struct {
+      organizer: actor_id
+    };
+    /// Organizador removido
+    OrganizerRemoved: struct {
+      organizer: actor_id
+    };
+    /// Escáner agregado
+    ScannerAdded: struct {
+      scanner: actor_id
+    };
+    /// Escáner removido
+    ScannerRemoved: struct {
+      scanner: actor_id
+    };
+    /// Configuración de evento actualizada
+    EventConfigUpdated: struct {
+      event_id: u256
+    };
+    /// Ticket listado en el Marketplace
+    TicketListed: struct {
+      ticket_id: u256,
+      event_id: u256,
+      seller: actor_id,
+      price: u256,
+    };
+    /// Ticket vendido desde el Marketplace
+    TicketSold: struct {
+      ticket_id: u256,
+      event_id: u256,
+      seller: actor_id,
+      buyer: actor_id,
+      price: u256,
+      seller_share: u256,
+      organizer_share: u256,
+      platform_share: u256,
+    };
+    /// Listado cancelado
+    ListingCancelled: struct {
+      ticket_id: u256,
+      event_id: u256,
+      seller: actor_id,
+    };
+  }
+};
+

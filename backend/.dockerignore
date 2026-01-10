@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.env.local
+*.log
+coverage
+.nyc_output
+.DS_Store
+*.swp
+*.swo
+*~
+
