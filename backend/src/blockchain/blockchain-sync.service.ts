@@ -27,7 +27,7 @@ export class BlockchainSyncService {
           where: { id: existingEvent.id },
           data: {
             metadataHash: eventData.metadataHash,
-            eventStartTime: new Date(eventData.eventStartTime * 1000),
+            eventStartTime: new Date(eventData.eventStartTime),
             // NO actualizar ticketsTotal, resaleConfig, etc. - preservar valores existentes
             lastSyncedAt: new Date(),
           },
@@ -105,7 +105,7 @@ export class BlockchainSyncService {
           data: {
             blockchainEventId: eventData.eventId,
             metadataHash: eventData.metadataHash,
-            eventStartTime: new Date(eventData.eventStartTime * 1000),
+            eventStartTime: new Date(eventData.eventStartTime),
             ticketsMinted: BigInt(0), // Resetear tickets minted
             lastSyncedAt: new Date(),
             // NO actualizar: ticketsTotal, resaleEnabled, maxResalePrice, resaleStartTime, resaleEndTime, percentages
@@ -126,7 +126,7 @@ export class BlockchainSyncService {
           blockchainEventId: eventData.eventId,
           organizerId: organizer.id,
           metadataHash: eventData.metadataHash,
-          eventStartTime: new Date(eventData.eventStartTime * 1000),
+          eventStartTime: new Date(eventData.eventStartTime),
           ticketsTotal: BigInt(eventData.ticketsTotal),
           ticketsMinted: BigInt(0),
           resaleEnabled: eventData.resaleConfig.enabled,
@@ -134,10 +134,10 @@ export class BlockchainSyncService {
             ? BigInt(eventData.resaleConfig.maxPrice)
             : null,
           resaleStartTime: eventData.resaleConfig.resaleStartTime
-            ? new Date(eventData.resaleConfig.resaleStartTime * 1000)
+            ? new Date(eventData.resaleConfig.resaleStartTime )
             : null,
           resaleEndTime: eventData.resaleConfig.resaleEndTime
-            ? new Date(eventData.resaleConfig.resaleEndTime * 1000)
+            ? new Date(eventData.resaleConfig.resaleEndTime )
             : null,
           sellerPercentage: eventData.commissionConfig.sellerPercentage,
           organizerPercentage: eventData.commissionConfig.organizerPercentage,
@@ -165,6 +165,15 @@ export class BlockchainSyncService {
       });
       if (!event) {
         this.logger.warn(`Event not found for ticket: ${ticketData.ticketId}`);
+        return null;
+      }
+
+      if (!ticketData.currentOwner) {
+        this.logger.warn(`Current owner is null/undefined for ticket: ${ticketData.ticketId}`);
+        return null;
+      }
+      if (!ticketData.originalBuyer) {
+        this.logger.warn(`Original buyer is null/undefined for ticket: ${ticketData.ticketId}`);
         return null;
       }
 

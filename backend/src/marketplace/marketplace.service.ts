@@ -16,6 +16,36 @@ export class MarketplaceService {
     private blockchainActions: BlockchainActionsService,
   ) {}
 
+  private serializeBigInt(obj: any): any {
+    if (obj === null || obj === undefined) {
+      return obj;
+    }
+  
+    if (typeof obj === 'bigint') {
+      return obj.toString();
+    }
+  
+    if (Array.isArray(obj)) {
+      return obj.map(item => this.serializeBigInt(item));
+    }
+  
+    if (typeof obj === 'object' && typeof obj.then === 'function') {
+      return obj;
+    }
+  
+    if (typeof obj === 'object') {
+      const transformed: any = {};
+      for (const key in obj) {
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+          transformed[key] = this.serializeBigInt(obj[key]);
+        }
+      }
+      return transformed;
+    }
+  
+    return obj;
+  }
+  
   async createListing(userId: string, createListingDto: CreateListingDto) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { id: createListingDto.ticketId },
@@ -80,9 +110,10 @@ export class MarketplaceService {
       );
 
       this.logger.log(`Ticket listed on blockchain: ${blockchainResult.hash}`);
+      
 
       // Crear listing en DB (se sincronizará completamente cuando llegue el evento)
-      return this.prisma.marketplaceListing.create({
+      const listing = await this.prisma.marketplaceListing.create({
         data: {
           ticketId: createListingDto.ticketId,
           sellerId: userId,
@@ -104,6 +135,7 @@ export class MarketplaceService {
           },
         },
       });
+      return this.serializeBigInt(listing);
     } catch (error) {
       this.logger.error(`Error listing ticket:`, error);
       throw new BadRequestException(`Failed to list ticket on blockchain: ${error.message}`);
@@ -159,7 +191,7 @@ export class MarketplaceService {
     ]);
 
     return {
-      data: listings,
+      data: this.serializeBigInt(listings),
       pagination: {
         page,
         limit,
@@ -200,7 +232,7 @@ export class MarketplaceService {
       throw new NotFoundException('Listing not found');
     }
 
-    return listing;
+    return this.serializeBigInt(listing);
   }
 
   async purchaseListing(buyerId: string, purchaseListingDto: PurchaseListingDto) {
@@ -265,7 +297,7 @@ export class MarketplaceService {
           },
         });
 
-        return updatedListing;
+        return this.serializeBigInt(updatedListing);
       });
     } catch (error) {
       this.logger.error(`Error purchasing listing:`, error);
@@ -298,12 +330,13 @@ export class MarketplaceService {
       await this.blockchainActions.cancelListing(BigInt(ticket.blockchainTicketId));
 
       // Actualizar en DB
-      return this.prisma.marketplaceListing.update({
+      const updatedListing = await this.prisma.marketplaceListing.update({
         where: { id: listingId },
         data: {
           status: ListingStatus.CANCELLED,
         },
       });
+      return this.serializeBigInt(updatedListing);
     } catch (error) {
       this.logger.error(`Error cancelling listing:`, error);
       throw new BadRequestException(`Failed to cancel listing on blockchain: ${error.message}`);

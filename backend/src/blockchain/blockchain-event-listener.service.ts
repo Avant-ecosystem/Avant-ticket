@@ -342,27 +342,35 @@ export class BlockchainEventListenerService implements OnModuleInit, OnModuleDes
     scanner: Uint8Array;
   }) {
     try {
-      // Obtener datos actualizados del ticket
       const ticketData = await this.connectionService.getSailsProgram().ticket.getTicket(data.ticket_id);
       if (!ticketData) {
         this.logger.warn(`Ticket ${data.ticket_id} not found`);
         return;
       }
-
-      // Convertir ActorId a direcciones SS58
-      const originalBuyerAddress = encodeAddress(ticketData.original_buyer, 42);
-      const currentOwnerAddress = encodeAddress(ticketData.current_owner, 42);
-
+  
+      // Función segura para convertir direcciones
+      const safeEncodeAddress = (address: Uint8Array): string | null => {
+        try {
+          if (!address || address.length === 0) {
+            return null;
+          }
+          return encodeAddress(address, 42);
+        } catch (error) {
+          this.logger.warn(`Failed to encode address: ${error.message}`);
+          return null;
+        }
+      };
+  
       const syncData = {
         ticketId: String(data.ticket_id),
         eventId: String(data.event_id),
-        originalBuyer: originalBuyerAddress,
-        currentOwner: currentOwnerAddress,
+        originalBuyer: safeEncodeAddress(ticketData.original_buyer),
+        currentOwner: safeEncodeAddress(ticketData.current_owner),
         zone: ticketData.zone || undefined,
         used: true,
         mintedAt: Number(ticketData.minted_at),
       };
-
+  
       await this.workerService.addSyncTicketJob(syncData);
     } catch (error) {
       this.logger.error(`Error handling TicketUsed:`, error);

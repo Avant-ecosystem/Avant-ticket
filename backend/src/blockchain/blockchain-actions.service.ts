@@ -44,7 +44,7 @@ export class BlockchainActionsService {
       await txWithAccount.calculateGas();
       
       // Enviar transacción
-      const { msgId, blockHash, txHash, response, isFinalized } = await txWithAccount.signAndSend();
+      const { msgId, blockHash, txHash, response, isFinalized  } = await txWithAccount.signAndSend();
       
       // Log detallado
       console.log('=== Transaction Details ===');

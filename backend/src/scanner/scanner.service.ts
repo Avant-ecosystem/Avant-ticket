@@ -15,6 +15,51 @@ export class ScannerService {
     private blockchainActions: BlockchainActionsService,
   ) {}
 
+  private serializeTicket(ticket: any): any {
+    if (!ticket) return ticket;
+  
+    
+    // Usar una función recursiva
+    const convertBigInts = (obj: any): any => {
+      if (obj === null || obj === undefined) {
+        return obj;
+      }
+  
+      // Si es un BigInt, convertirlo a string
+      if (typeof obj === 'bigint') {
+        console.log(`Converting BigInt: ${obj} to string`);
+        return obj.toString();
+      }
+  
+      // Si es un array, procesar cada elemento
+      if (Array.isArray(obj)) {
+        console.log('Processing array...');
+        return obj.map(item => convertBigInts(item));
+      }
+  
+      // Si es un objeto (pero no Date ni otros tipos especiales)
+      if (typeof obj === 'object' && !(obj instanceof Date)) {
+        console.log('Processing object...');
+        const result: any = {};
+        
+        for (const key in obj) {
+          if (obj.hasOwnProperty(key)) {
+            console.log(`Checking key: ${key}`);
+            result[key] = convertBigInts(obj[key]);
+          }
+        }
+        return result;
+      }
+  
+      // Para cualquier otro tipo, retornar tal cual
+      return obj;
+    };
+  
+    const serialized = convertBigInts(ticket);
+    console.log('Serialization complete');
+    return serialized;
+  }
+
   async scanTicket(qrData: string, scannerId: string) {
     try {
       const decoded = this.qrService.verifyQr(qrData);
@@ -51,8 +96,24 @@ export class ScannerService {
   async getTicketByQr(qrData: string) {
     try {
       const decoded = this.qrService.verifyQr(qrData);
-      return this.ticketsService.findByBlockchainId(decoded.ticketId);
-    } catch {
+
+      
+      const ticket = await this.ticketsService.findByBlockchainId(decoded.ticketId);
+
+      
+      // Verificar específicamente los valores BigInt
+      if (ticket) {
+        Object.keys(ticket).forEach(key => {
+          console.log(`${key}: ${ticket[key]}, type: ${typeof ticket[key]}`);
+        });
+
+      }
+      
+      const serialized = this.serializeTicket(ticket);
+
+      return serialized;
+    } catch (error) {
+      console.error('Error in getTicketByQr:', error);
       throw new BadRequestException('Invalid QR code');
     }
   }

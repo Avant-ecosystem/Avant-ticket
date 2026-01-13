@@ -24,6 +24,108 @@ export class TicketsService {
     });
   }
 
+  private serializeTicket(ticket: any): any {
+    if (!ticket) return ticket;
+  
+    const serialized: any = {
+      id: ticket.id,
+      blockchainTicketId: ticket.blockchainTicketId?.toString() || null,
+      eventId: ticket.eventId,
+      ownerId: ticket.ownerId,
+      originalBuyerId: ticket.originalBuyerId,
+      zone: ticket.zone,
+      status: ticket.status,
+      usedAt: ticket.usedAt,
+      mintedAt: ticket.mintedAt,
+      createdAt: ticket.createdAt,
+      updatedAt: ticket.updatedAt,
+      lastSyncedAt: ticket.lastSyncedAt,
+    };
+  
+    // Serializar owner si existe
+    if (ticket.owner) {
+      serialized.owner = {
+        id: ticket.owner.id,
+        email: ticket.owner.email,
+        username: ticket.owner.username,
+        walletAddress: ticket.owner.walletAddress,
+        dni: ticket.owner.dni,
+        role: ticket.owner.role,
+        // No incluir password por seguridad
+      };
+    }
+  
+    // Serializar originalBuyer si existe
+    if (ticket.originalBuyer) {
+      serialized.originalBuyer = {
+        id: ticket.originalBuyer.id,
+        username: ticket.originalBuyer.username,
+        walletAddress: ticket.originalBuyer.walletAddress,
+      };
+    }
+  
+    // Serializar event si existe
+    if (ticket.event) {
+      serialized.event = {
+        id: ticket.event.id,
+        blockchainEventId: ticket.event.blockchainEventId?.toString() || null,
+        name: ticket.event.name,
+        description: ticket.event.description,
+        eventStartTime: ticket.event.eventStartTime,
+        ticketsMinted: ticket.event.ticketsMinted?.toString() || '0',
+        ticketsTotal: ticket.event.ticketsTotal?.toString() || '0',
+        active: ticket.event.active,
+        resaleEnabled: ticket.event.resaleEnabled,
+        maxResalePrice: ticket.event.maxResalePrice?.toString() || null,
+        resaleStartTime: ticket.event.resaleStartTime,
+        resaleEndTime: ticket.event.resaleEndTime,
+        sellerPercentage: ticket.event.sellerPercentage,
+        organizerPercentage: ticket.event.organizerPercentage,
+        platformPercentage: ticket.event.platformPercentage,
+        // Serializar organizer si está incluido
+        ...(ticket.event.organizer && {
+          organizer: {
+            id: ticket.event.organizer.id,
+            username: ticket.event.organizer.username,
+            walletAddress: ticket.event.organizer.walletAddress,
+          },
+        }),
+      };
+    }
+  
+    // Serializar listings si existen
+    if (ticket.listings && Array.isArray(ticket.listings)) {
+      serialized.listings = ticket.listings.map((listing: any) => ({
+        id: listing.id,
+        price: listing.price?.toString() || '0',
+        status: listing.status,
+        listedAt: listing.listedAt,
+        soldAt: listing.soldAt,
+        blockchainTxHash: listing.blockchainTxHash,
+        ...(listing.seller && {
+          seller: {
+            id: listing.seller.id,
+            username: listing.seller.username,
+            walletAddress: listing.seller.walletAddress,
+          },
+        }),
+        ...(listing.buyer && {
+          buyer: {
+            id: listing.buyer.id,
+            username: listing.buyer.username,
+            walletAddress: listing.buyer.walletAddress,
+          },
+        }),
+      }));
+    }
+  
+    return serialized;
+  }
+  
+  private serializeTickets(tickets: any[]): any[] {
+    return tickets.map(ticket => this.serializeTicket(ticket));
+  }
+
   async findAll(pagination?: { page?: number; limit?: number }) {
     const page = pagination?.page || 1;
     const limit = pagination?.limit || 10;
@@ -50,8 +152,9 @@ export class TicketsService {
       this.prisma.ticket.count(),
     ]);
 
+
     return {
-      data: tickets,
+      data: this.serializeTickets(tickets),
       pagination: {
         page,
         limit,
@@ -87,7 +190,7 @@ export class TicketsService {
     if (!ticket) {
       throw new NotFoundException(`Ticket with ID ${id} not found`);
     }
-    return ticket;
+    return this.serializeTicket(ticket);
   }
 
   async findByBlockchainId(blockchainTicketId: string) {
@@ -121,7 +224,7 @@ export class TicketsService {
     ]);
 
     return {
-      data: tickets,
+      data: this.serializeTickets(tickets),
       pagination: {
         page,
         limit,
@@ -158,7 +261,7 @@ export class TicketsService {
     ]);
 
     return {
-      data: tickets,
+      data: this.serializeTickets(tickets),
       pagination: {
         page,
         limit,

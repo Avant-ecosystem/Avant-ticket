@@ -18,20 +18,46 @@ export class EventsService {
   private serializeEvent(event: any) {
     if (!event) return event;
     
+    // Calcular tickets minteados
+    const ticketsMinted = event._count?.tickets || event.tickets?.length || 0;
+    const ticketsTotal = typeof event.ticketsTotal === 'bigint' 
+      ? event.ticketsTotal 
+      : BigInt(event.ticketsTotal || 0);
+    
+    const ticketsMintedBigInt = BigInt(ticketsMinted);
+    const ticketsRemaining = ticketsTotal - ticketsMintedBigInt;
+    const mintPercentage = ticketsTotal > 0n
+      ? Number((ticketsMintedBigInt * 100n) / ticketsTotal)
+      : 0;
+  
     const serialized = {
       ...event,
-      ticketsTotal: typeof event.ticketsTotal === 'bigint' ? event.ticketsTotal.toString() : (event.ticketsTotal ?? '0'),
-      ticketsMinted: typeof event.ticketsMinted === 'bigint' ? event.ticketsMinted.toString() : (event.ticketsMinted ?? '0'),
+      ticketsTotal: ticketsTotal.toString(),
+      ticketsMinted: ticketsMintedBigInt.toString(),
+      ticketsRemaining: ticketsRemaining.toString(),
+      mintPercentage: mintPercentage.toFixed(2),
       maxResalePrice: event.maxResalePrice 
-        ? (typeof event.maxResalePrice === 'bigint' ? event.maxResalePrice.toString() : event.maxResalePrice)
+        ? (typeof event.maxResalePrice === 'bigint' 
+            ? event.maxResalePrice.toString() 
+            : event.maxResalePrice.toString())
         : null,
+      // Asegurar que _count no se incluya en la respuesta si no es necesario
+      _count: undefined,
     };
+    
+    // Remover _count del objeto final
+    delete serialized._count;
     
     // Si hay tickets incluidos, serializarlos también
     if (event.tickets && Array.isArray(event.tickets)) {
       serialized.tickets = event.tickets.map((ticket: any) => ({
         ...ticket,
-        // Los tickets no tienen BigInt directamente en este contexto, pero por si acaso
+        tokenId: ticket.tokenId?.toString() || null,
+        // Si el ticket tiene owner con BigInt, serializarlo
+        owner: ticket.owner ? {
+          ...ticket.owner,
+          // Aquí puedes agregar más serializaciones si es necesario
+        } : ticket.owner,
       }));
     }
     
@@ -55,19 +81,19 @@ export class EventsService {
       const metadataHash = Buffer.from(createEventDto.metadataHash.replace('0x', ''), 'hex');
       const metadataArray = Array.from(metadataHash);
 
-      const eventStartTime = Math.floor(new Date(createEventDto.eventStartTime).getTime() / 1000);
+      const eventStartTime = Math.floor(new Date(createEventDto.eventStartTime).getTime());
       const ticketsTotal = BigInt(createEventDto.ticketsTotal);
       if(!createEventDto.resaleEnabled){
         throw new BadRequestException('Resale is not enabled');
        }
-      const resaleConfig = {
+       const resaleConfig = {
         enabled: createEventDto.resaleEnabled,
         max_price: createEventDto.maxResalePrice ? BigInt(createEventDto.maxResalePrice) : null,
         resale_start_time: createEventDto.resaleStartTime
-          ? BigInt(Math.floor(new Date(createEventDto.resaleStartTime).getTime() / 1000))
+          ? BigInt(new Date(createEventDto.resaleStartTime).getTime()) // Milisegundos
           : null,
         resale_end_time: createEventDto.resaleEndTime
-          ? BigInt(Math.floor(new Date(createEventDto.resaleEndTime).getTime() / 1000))
+          ? BigInt(new Date(createEventDto.resaleEndTime).getTime()) // Milisegundos
           : null,
       };
 
@@ -162,7 +188,7 @@ export class EventsService {
           eventStartTime: new Date(createEventDto.eventStartTime),
           resaleStartTime: createEventDto.resaleStartTime ? new Date(createEventDto.resaleStartTime) : null,
           resaleEndTime: createEventDto.resaleEndTime ? new Date(createEventDto.resaleEndTime) : null,
-          ticketsTotal: ticketsTotal,
+          ticketsTotal: createEventDto.ticketsTotal,
           maxResalePrice: createEventDto.maxResalePrice ? BigInt(createEventDto.maxResalePrice) : null,
           organizerId: userId,
           resaleEnabled: createEventDto.resaleEnabled ?? true,
@@ -234,6 +260,7 @@ export class EventsService {
             id: true,
             walletAddress: true,
             username: true,
+
           },
         },
         tickets: {

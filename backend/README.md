@@ -1349,4 +1349,4 @@ Para más información o soporte, contactar al equipo de desarrollo.
 
 ---
 
-**Última actualización**: 2024-01-09
+**Última actualización**: 2025-01-12
