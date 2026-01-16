@@ -15,12 +15,88 @@ export class TicketsService {
   ) {}
 
   async create(createTicketDto: CreateTicketDto) {
-    return this.prisma.ticket.create({
-      data: {
-        ...createTicketDto,
-        ownerId: createTicketDto.originalBuyerId,
-        mintedAt: new Date(createTicketDto.mintedAt),
-      },
+    const { eventId, zoneId, originalBuyerId, ...rest } = createTicketDto;
+
+    // Verificar que el evento existe
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: { zones: true }
+    });
+
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
+    }
+
+    // Si el evento tiene zonas, zoneId debe ser proporcionado
+    if (event.zones.length > 0 && !zoneId) {
+      throw new BadRequestException('Zone ID is required for events with zones');
+    }
+
+    // Si se proporciona zoneId, verificar que existe y pertenece al evento
+    let zone
+    if (zoneId) {
+      zone = await this.prisma.eventZone.findFirst({
+        where: {
+          id: zoneId,
+          eventId: eventId
+        }
+      });
+
+      if (!zone) {
+        throw new NotFoundException(`Zone with ID ${zoneId} not found or does not belong to the specified event`);
+      }
+
+      // Verificar que hay capacidad disponible en la zona
+      if (zone.sold >= zone.capacity) {
+        throw new BadRequestException(`Zone "${zone.name}" is sold out`);
+      }
+    }
+
+    // Verificar que el comprador original existe
+    const originalBuyer = await this.prisma.user.findUnique({
+      where: { id: originalBuyerId }
+    });
+
+    if (!originalBuyer) {
+      throw new NotFoundException(`User with ID ${originalBuyerId} not found`);
+    }
+
+    // Usar transacción para asegurar consistencia
+    return this.prisma.$transaction(async (prisma) => {
+      // Crear el ticket
+      const ticket = await prisma.ticket.create({
+        data: {
+          ...rest,
+          eventId,
+          zoneId: zoneId || null,
+          originalBuyerId,
+          ownerId: originalBuyerId,
+          mintedAt: new Date(createTicketDto.mintedAt),
+        },
+        include: {
+          zone: true,
+          event: true,
+          originalBuyer: {
+            select: {
+              id: true,
+              username: true,
+              walletAddress: true,
+            }
+          }
+        }
+      });
+
+      // Si hay una zona, actualizar el contador de vendidos
+      if (zone) {
+        await prisma.eventZone.update({
+          where: { id: zoneId },
+          data: {
+            sold: zone.sold + 1n // Usar BigInt
+          }
+        });
+      }
+
+      return ticket;
     });
   }
 
@@ -33,7 +109,7 @@ export class TicketsService {
       eventId: ticket.eventId,
       ownerId: ticket.ownerId,
       originalBuyerId: ticket.originalBuyerId,
-      zone: ticket.zone,
+      zoneId: ticket.zoneId,
       status: ticket.status,
       usedAt: ticket.usedAt,
       mintedAt: ticket.mintedAt,
@@ -41,6 +117,17 @@ export class TicketsService {
       updatedAt: ticket.updatedAt,
       lastSyncedAt: ticket.lastSyncedAt,
     };
+
+    // Serializar zone si existe
+    if (ticket.zone) {
+      serialized.zone = {
+        id: ticket.zone.id,
+        name: ticket.zone.name,
+        price: ticket.zone.price ? (typeof ticket.zone.price === 'object' && 'toNumber' in ticket.zone.price ? ticket.zone.price.toNumber() : ticket.zone.price) : 0,
+        capacity: ticket.zone.capacity?.toString() || '0',
+        sold: ticket.zone.sold?.toString() || '0',
+      };
+    }
   
     // Serializar owner si existe
     if (ticket.owner) {
@@ -137,6 +224,7 @@ export class TicketsService {
         take: limit,
         include: {
           event: true,
+          zone: true,
           owner: {
             select: {
               id: true,
@@ -178,6 +266,7 @@ export class TicketsService {
             },
           },
         },
+        zone: true,
         owner: {
           select: {
             id: true,
@@ -215,6 +304,7 @@ export class TicketsService {
         where: { ownerId },
         include: {
           event: true,
+          zone: true,
         },
         orderBy: {
           createdAt: 'desc',
@@ -245,6 +335,7 @@ export class TicketsService {
         take: limit,
         where: { eventId },
         include: {
+          zone: true,
           owner: {
             select: {
               id: true,
@@ -304,7 +395,91 @@ export class TicketsService {
     }
   }
 
-  async mintTickets(
+  async createBatch(ticketsData: CreateTicketDto[]) {
+    // Agrupar por eventId para validaciones eficientes
+    const eventIds = [...new Set(ticketsData.map(t => t.eventId))];
+    
+    // Obtener todos los eventos y sus zonas
+    const events = await this.prisma.event.findMany({
+      where: { id: { in: eventIds } },
+      include: { zones: true }
+    });
+  
+    const eventMap = new Map(events.map(e => [e.id, e]));
+  
+    // Validar que todos los eventos existen
+    for (const ticketData of ticketsData) {
+      const event = eventMap.get(ticketData.eventId);
+      if (!event) {
+        throw new NotFoundException(`Event with ID ${ticketData.eventId} not found`);
+      }
+  
+      // Si el evento tiene zonas, zoneId debe ser proporcionado
+      if (event.zones.length > 0 && !ticketData.zoneId) {
+        throw new BadRequestException(`Zone ID is required for event ${event.id} which has zones`);
+      }
+  
+      // Si se proporciona zoneId, verificar que existe
+      if (ticketData.zoneId) {
+        const zoneExists = event.zones.some(z => z.id === ticketData.zoneId);
+        if (!zoneExists) {
+          throw new NotFoundException(`Zone with ID ${ticketData.zoneId} not found in event ${event.id}`);
+        }
+      }
+    }
+  
+    // Usar transacción para consistencia
+    return this.prisma.$transaction(async (prisma) => {
+      const createdTickets: any[] = []; // Especificar el tipo explícitamente
+      
+      for (const ticketData of ticketsData) {
+        const { eventId, zoneId, originalBuyerId, ...rest } = ticketData;
+        const event = eventMap.get(eventId);
+  
+        // Verificar que el usuario existe
+        const originalBuyer = await prisma.user.findUnique({
+          where: { id: originalBuyerId }
+        });
+  
+        if (!originalBuyer) {
+          throw new NotFoundException(`User with ID ${originalBuyerId} not found`);
+        }
+  
+        // Crear ticket
+        const ticket = await prisma.ticket.create({
+          data: {
+            ...rest,
+            eventId,
+            zoneId: zoneId || null,
+            originalBuyerId,
+            ownerId: originalBuyerId,
+            mintedAt: new Date(ticketData.mintedAt),
+          },
+          include: {
+            zone: true
+          }
+        });
+  
+        createdTickets.push(ticket);
+  
+        // Si hay zona, actualizar contador
+        if (zoneId && event) {
+          const zone = event.zones.find(z => z.id === zoneId);
+          if (zone) {
+            await prisma.eventZone.update({
+              where: { id: zoneId },
+              data: {
+                sold: zone.sold + 1n
+              }
+            });
+          }
+        }
+      }
+  
+      return createdTickets;
+    });
+  }
+ async mintTickets(
     eventId: string,
     buyerWalletAddress: string,
     amount: number,
@@ -312,10 +487,28 @@ export class TicketsService {
   ) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
+      include: { zones: true }
     });
 
     if (!event) {
       throw new NotFoundException('Event not found');
+    }
+
+    // Si el evento tiene zonas, validar las zonas proporcionadas
+    if (event.zones.length > 0) {
+      if (!zones || zones.length !== amount) {
+        throw new BadRequestException(`Must specify exactly ${amount} zones for this event`);
+      }
+
+      // Verificar que todas las zonas existen
+      for (const zoneId of zones) {
+        if (zoneId) {
+          const zoneExists = event.zones.some(z => z.id === zoneId);
+          if (!zoneExists) {
+            throw new NotFoundException(`Zone with ID ${zoneId} not found in event ${event.id}`);
+          }
+        }
+      }
     }
 
     try {
@@ -330,8 +523,6 @@ export class TicketsService {
 
       this.logger.log(`Tickets minted on blockchain: ${blockchainResult.hash}`);
       
-      // Los tickets se crearán en DB cuando llegue el evento TicketsMinted
-      // Por ahora retornamos el resultado de blockchain
       return {
         blockchainTxHash: blockchainResult.hash,
         message: 'Tickets are being minted. They will appear in your account once the transaction is confirmed.',
@@ -341,6 +532,7 @@ export class TicketsService {
       throw new BadRequestException(`Failed to mint tickets on blockchain: ${error.message}`);
     }
   }
+
 
   async getStats(userId?: string) {
     // Si es admin, obtener estadísticas completas

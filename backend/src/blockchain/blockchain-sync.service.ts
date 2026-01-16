@@ -14,249 +14,383 @@ export class BlockchainSyncService {
 
   async syncEvent(eventData: SyncEventDto) {
     try {
-      // 1. Buscar si ya existe un evento con el blockchainEventId real
-      let existingEvent = await this.prisma.event.findUnique({
+      /**
+       * 1. Si ya existe un evento con el blockchainEventId real
+       *    → solo actualizamos campos que vienen del blockchain
+       */
+      const existingEvent = await this.prisma.event.findUnique({
         where: { blockchainEventId: eventData.eventId },
       });
-
+  
       if (existingEvent) {
-        // Si existe un evento con este blockchainEventId, solo actualizar campos del blockchain
-        // Preservar los valores existentes (ticketsTotal, resaleConfig, etc.) porque ya están establecidos
-        this.logger.log(`Event with blockchainEventId ${eventData.eventId} already exists. Updating blockchain fields only.`);
+        this.logger.log(
+          `Event with blockchainEventId ${eventData.eventId} already exists. Updating blockchain fields only.`,
+        );
+  
         const updatedEvent = await this.prisma.event.update({
           where: { id: existingEvent.id },
           data: {
             metadataHash: eventData.metadataHash,
             eventStartTime: new Date(eventData.eventStartTime),
-            // NO actualizar ticketsTotal, resaleConfig, etc. - preservar valores existentes
             lastSyncedAt: new Date(),
           },
         });
+  
         this.logger.log(`Event ${eventData.eventId} updated in database`);
         return updatedEvent;
       }
-
-      // 2. Si no existe, buscar eventos pendientes (que empiezan con "pending-")
-      // Buscamos por metadataHash y organizer para encontrar el evento pendiente
+  
+      /**
+       * 2. Buscar organizador
+       *    (syncEvent NO crea organizers ni eventos)
+       */
       const organizer = await this.prisma.user.findUnique({
         where: { walletAddress: eventData.organizer },
       });
-
+  
       if (!organizer) {
-        this.logger.warn(`Organizer not found: ${eventData.organizer}`);
-        // Intentar crear un placeholder organizer si no existe (para eventos creados directamente en blockchain)
-        this.logger.warn(`Will create event anyway, but organizer ${eventData.organizer} needs to be created first`);
+        this.logger.error(
+          `CRITICAL: Organizer not found for blockchain event ${eventData.eventId}. Skipping sync.`,
+        );
         return null;
       }
-
-      // Buscar eventos pendientes recientes (últimos 30 minutos) con el mismo metadataHash y organizer
-      // Aumentamos el tiempo para dar más margen a la sincronización
+  
+      /**
+       * 3. Buscar evento pendiente (pending-*)
+       *    Ventana amplia para evitar race conditions
+       */
       const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-      
-      this.logger.log(`Searching for pending event with metadataHash: ${eventData.metadataHash}, organizer: ${organizer.id}`);
-      
-      // Primero buscar por metadataHash exacto
+  
+      this.logger.log(
+        `Searching pending event for organizer ${organizer.id} and metadataHash ${eventData.metadataHash}`,
+      );
+  
       let pendingEvent = await this.prisma.event.findFirst({
         where: {
           blockchainEventId: { startsWith: 'pending-' },
-          metadataHash: eventData.metadataHash,
           organizerId: organizer.id,
           createdAt: { gte: thirtyMinutesAgo },
         },
         orderBy: { createdAt: 'desc' },
       });
-
-      // Si no encuentra por metadataHash exacto, buscar solo por organizer (último evento pendiente)
+  
       if (!pendingEvent) {
-        this.logger.log(`No pending event found with exact metadataHash, trying broader search...`);
-        pendingEvent = await this.prisma.event.findFirst({
-          where: {
-            blockchainEventId: { startsWith: 'pending-' },
-            organizerId: organizer.id,
-            createdAt: { gte: thirtyMinutesAgo },
-          },
-          orderBy: { createdAt: 'desc' },
-        });
+        this.logger.error(
+          `CRITICAL: Blockchain event ${eventData.eventId} arrived but no pending event exists. Skipping update to avoid duplicates.`,
+        );
+        return null;
       }
-
-      if (pendingEvent) {
-        this.logger.log(`Found pending event ${pendingEvent.id} with blockchainEventId: ${pendingEvent.blockchainEventId}`);
-      } else {
-        this.logger.warn(`No pending event found for event ${eventData.eventId}. Will create new event.`);
-      }
-
-      if (pendingEvent) {
-        // Actualizar el evento pendiente con el blockchainEventId real
-        // IMPORTANTE: Preservar los valores originales del evento pendiente (ticketsTotal, resaleConfig, etc.)
-        // porque fueron creados con los datos correctos del usuario. Solo actualizar campos del blockchain.
-        this.logger.log(`Updating pending event ${pendingEvent.id} with blockchainEventId ${eventData.eventId}`);
-        this.logger.log(`Preserving original values: ticketsTotal=${pendingEvent.ticketsTotal}, resaleEnabled=${pendingEvent.resaleEnabled}, maxResalePrice=${pendingEvent.maxResalePrice}`);
-        
-        // Solo actualizar los campos que vienen del blockchain:
-        // - blockchainEventId: El ID real del blockchain
-        // - metadataHash: El hash del metadata del blockchain
-        // - eventStartTime: La fecha del blockchain (fuente de verdad)
-        // - ticketsMinted: Resetear a 0 (nuevo evento)
-        // - lastSyncedAt: Fecha de sincronización
-        // Los demás campos (ticketsTotal, resaleEnabled, maxResalePrice, resaleStartTime, resaleEndTime, percentages)
-        // se preservan automáticamente porque NO los incluimos en el update
-        const updatedEvent = await this.prisma.event.update({
-          where: { id: pendingEvent.id },
-          data: {
-            blockchainEventId: eventData.eventId,
-            metadataHash: eventData.metadataHash,
-            eventStartTime: new Date(eventData.eventStartTime),
-            ticketsMinted: BigInt(0), // Resetear tickets minted
-            lastSyncedAt: new Date(),
-            // NO actualizar: ticketsTotal, resaleEnabled, maxResalePrice, resaleStartTime, resaleEndTime, percentages
-            // Estos se preservan del evento pendiente original
-          },
-        });
-        this.logger.log(`Pending event updated with blockchainEventId: ${eventData.eventId}`);
-        this.logger.log(`Final values: ticketsTotal=${updatedEvent.ticketsTotal}, resaleEnabled=${updatedEvent.resaleEnabled}, maxResalePrice=${updatedEvent.maxResalePrice}`);
-        return updatedEvent;
-      }
-
-      // 3. Si no hay evento pendiente, crear uno nuevo
-      // Esto puede pasar si el evento se creó directamente en blockchain sin pasar por el backend
-      // En este caso, usar los valores por defecto de eventData porque no hay evento pendiente con datos correctos
-      this.logger.warn(`No pending event found. Creating new event with default values from blockchain.`);
-      const newEvent = await this.prisma.event.create({
+  
+      /**
+       * 4. Actualizar evento pendiente con el ID real del blockchain
+       *    ⚠️ NO tocar campos de negocio (zonas, precios, resale, etc.)
+       */
+      this.logger.log(
+        `Updating pending event ${pendingEvent.id} with blockchainEventId ${eventData.eventId}`,
+      );
+  
+      const updatedEvent = await this.prisma.event.update({
+        where: { id: pendingEvent.id },
         data: {
           blockchainEventId: eventData.eventId,
-          organizerId: organizer.id,
           metadataHash: eventData.metadataHash,
           eventStartTime: new Date(eventData.eventStartTime),
-          ticketsTotal: BigInt(eventData.ticketsTotal),
-          ticketsMinted: BigInt(0),
-          resaleEnabled: eventData.resaleConfig.enabled,
-          maxResalePrice: eventData.resaleConfig.maxPrice
-            ? BigInt(eventData.resaleConfig.maxPrice)
-            : null,
-          resaleStartTime: eventData.resaleConfig.resaleStartTime
-            ? new Date(eventData.resaleConfig.resaleStartTime )
-            : null,
-          resaleEndTime: eventData.resaleConfig.resaleEndTime
-            ? new Date(eventData.resaleConfig.resaleEndTime )
-            : null,
-          sellerPercentage: eventData.commissionConfig.sellerPercentage,
-          organizerPercentage: eventData.commissionConfig.organizerPercentage,
-          platformPercentage: eventData.commissionConfig.platformPercentage,
           lastSyncedAt: new Date(),
         },
       });
-
-      this.logger.log(`New event created in database: ${eventData.eventId}`);
-      return newEvent;
+  
+      this.logger.log(
+        `Pending event ${pendingEvent.id} successfully linked to blockchainEventId ${eventData.eventId}`,
+      );
+  
+      return updatedEvent;
     } catch (error) {
-      this.logger.error(`Error syncing event ${eventData.eventId}:`, error);
+      this.logger.error(
+        `Error syncing blockchain event ${eventData.eventId}`,
+        error,
+      );
+      throw error;
+    }
+  }
+  async syncTicket(ticketData: SyncTicketDto) {
+    try {
+      const event = await this.prisma.event.findUnique({
+        where: { blockchainEventId: ticketData.eventId },
+      });
+      if (!event) return null;
+  
+      if (!ticketData.currentOwner || !ticketData.originalBuyer) return null;
+  
+      const [owner, originalBuyer] = await Promise.all([
+        this.findOrCreateUserByWallet(ticketData.currentOwner),
+        this.findOrCreateUserByWallet(ticketData.originalBuyer),
+      ]);
+      if (!owner || !originalBuyer) return null;
+  
+      // 🔍 Buscar ticket PENDING más antiguo
+      const pendingTicket = await this.prisma.ticket.findFirst({
+        where: {
+          eventId: event.id,
+          ownerId: originalBuyer.id,
+          blockchainTicketId: { startsWith: 'pending-' },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+  
+      if (!pendingTicket) {
+        this.logger.warn(`No pending ticket found for ${ticketData.ticketId}`);
+        return null;
+      }
+  
+      // ✅ CONFIRMAR TICKET
+      const updatedTicket = await this.prisma.ticket.update({
+        where: { id: pendingTicket.id },
+        data: {
+          blockchainTicketId: ticketData.ticketId,
+          ownerId: owner.id,
+          status: ticketData.used ? TicketStatus.USED : TicketStatus.ACTIVE,
+          usedAt: ticketData.used ? new Date() : null,
+          lastSyncedAt: new Date(),
+        },
+      });
+  
+      this.logger.log(`Ticket confirmed ${ticketData.ticketId}`);
+      return updatedTicket;
+  
+    } catch (error) {
+      this.logger.error(`Error syncing ticket ${ticketData.ticketId}`, error);
       throw error;
     }
   }
 
-  async syncTicket(ticketData: SyncTicketDto) {
+  private async updateExistingTicketSafe(
+    existingTicket: any,
+    ownerId: string,
+    ticketData: SyncTicketDto,
+    resolvedZoneId: string | null,
+  ) {
+    const updateData: any = {
+      ownerId,
+      status: ticketData.used ? TicketStatus.USED : TicketStatus.ACTIVE,
+      lastSyncedAt: new Date(),
+    };
+  
+    // 👉 solo setear zona si antes NO tenía
+    if (!existingTicket.zoneId && resolvedZoneId) {
+      updateData.zoneId = resolvedZoneId;
+      await this.incrementZoneSoldCount(resolvedZoneId);
+    }
+  
+    if (ticketData.used && !existingTicket.usedAt) {
+      updateData.usedAt = new Date();
+    }
+  
+    return this.prisma.ticket.update({
+      where: { id: existingTicket.id },
+      data: updateData,
+    });
+  }
+  
+  private async findOrCreateUserByWallet(walletAddress: string) {
     try {
-      const existingTicket = await this.prisma.ticket.findUnique({
-        where: { blockchainTicketId: ticketData.ticketId },
+      // Primero buscar usuario existente
+      let user = await this.prisma.user.findUnique({
+        where: { walletAddress },
       });
 
-      const event = await this.prisma.event.findUnique({
-        where: { blockchainEventId: ticketData.eventId },
-      });
-      if (!event) {
-        this.logger.warn(`Event not found for ticket: ${ticketData.ticketId}`);
-        return null;
-      }
+      // Si no existe, crear un usuario placeholder
+      if (!user) {
+        this.logger.log(`Creating placeholder user for wallet: ${walletAddress}`);
+        
+        // Generar un email temporal basado en el wallet
+        const tempEmail = `${walletAddress.toLowerCase().substring(0, 20)}@temp-wallet.com`;
+        // Generar un DNI temporal
+        const tempDni = `WALLET_${walletAddress.substring(0, 10)}`;
+        // Generar username temporal
+        const tempUsername = `wallet_${walletAddress.substring(0, 10)}`;
 
-      if (!ticketData.currentOwner) {
-        this.logger.warn(`Current owner is null/undefined for ticket: ${ticketData.ticketId}`);
-        return null;
-      }
-      if (!ticketData.originalBuyer) {
-        this.logger.warn(`Original buyer is null/undefined for ticket: ${ticketData.ticketId}`);
-        return null;
-      }
-
-      const owner = await this.prisma.user.findUnique({
-        where: { walletAddress: ticketData.currentOwner },
-      });
-
-      if (!owner) {
-        this.logger.warn(`Owner not found: ${ticketData.currentOwner}`);
-        return null;
-      }
-
-      if (existingTicket) {
-        const updateData: any = {
-          ownerId: owner.id,
-          status: ticketData.used ? TicketStatus.USED : TicketStatus.ACTIVE,
-          lastSyncedAt: new Date(),
-        };
-
-        if (ticketData.used && !existingTicket.usedAt) {
-          updateData.usedAt = new Date();
-        }
-
-        return this.prisma.ticket.update({
-          where: { id: existingTicket.id },
-          data: updateData,
+        user = await this.prisma.user.create({
+          data: {
+            email: tempEmail,
+            dni: tempDni,
+            username: tempUsername,
+            walletAddress: walletAddress,
+            password: 'placeholder_password_need_to_reset', // Usuario deberá resetear
+            pais: 'Unknown',
+            provincia: 'Unknown',
+            ciudad: 'Unknown',
+            calle: 'Unknown',
+            numero: 'Unknown',
+            codigoPostal: '00000',
+            role: 'USER',
+          },
         });
+
+        this.logger.log(`Created placeholder user: ${user.id} for wallet: ${walletAddress}`);
       }
 
-      const originalBuyer = await this.prisma.user.findUnique({
-        where: { walletAddress: ticketData.originalBuyer },
-      });
+      return user;
+    } catch (error) {
+      this.logger.error(`Error finding/creating user for wallet ${walletAddress}:`, error);
+      return null;
+    }
+  }
 
-      if (!originalBuyer) {
-        this.logger.warn(`Original buyer not found: ${ticketData.originalBuyer}`);
-        return null;
-      }
+  private async handleTicketZone(eventId: string, ticketData: SyncTicketDto) {
+    try {
+      if (!ticketData.zone) return null;
 
-      const ticket = await this.prisma.ticket.create({
-        data: {
-          blockchainTicketId: ticketData.ticketId,
-          eventId: event.id,
-          ownerId: ticketData.currentOwner === ticketData.originalBuyer ? originalBuyer.id : owner.id,
-          originalBuyerId: originalBuyer.id,
-          zone: ticketData.zone || null,
-          mintedAt: new Date(ticketData.mintedAt * 1000),
-          status: ticketData.used ? TicketStatus.USED : TicketStatus.ACTIVE,
-          usedAt: ticketData.used ? new Date() : null,
+      // Buscar zona existente por nombre
+      let zone = await this.prisma.eventZone.findFirst({
+        where: {
+          eventId: eventId,
+          name: ticketData.zone,
         },
       });
 
-      this.logger.log(`Ticket synced: ${ticketData.ticketId}`);
-      return ticket;
+      // Si no existe, crear la zona
+      if (!zone) {
+        this.logger.log(`Zone "${ticketData.zone}" not found, creating it...`);
+        
+        zone = await this.prisma.eventZone.create({
+          data: {
+            eventId: eventId,
+            name: ticketData.zone,
+            price: ticketData.zonePrice ? parseFloat(ticketData.zonePrice) : 0,
+            capacity: ticketData.zoneCapacity ? BigInt(ticketData.zoneCapacity) : BigInt(0),
+            sold: BigInt(0), // Inicialmente 0 vendidos
+          },
+        });
+
+        this.logger.log(`Created zone: ${zone.id} for event: ${eventId}`);
+      }
+
+      return zone;
     } catch (error) {
-      this.logger.error(`Error syncing ticket ${ticketData.ticketId}:`, error);
-      throw error;
+      this.logger.error(`Error handling zone for ticket ${ticketData.ticketId}:`, error);
+      return null;
     }
+  }
+
+  private async incrementZoneSoldCount(zoneId: string) {
+    try {
+      await this.prisma.eventZone.update({
+        where: { id: zoneId },
+        data: {
+          sold: {
+            increment: 1,
+          },
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Error incrementing zone sold count for zone ${zoneId}:`, error);
+    }
+  }
+
+  private async updateExistingTicket(
+    existingTicket: any,
+    owner: any,
+    originalBuyer: any,
+    ticketData: SyncTicketDto,
+    zoneId: string | null
+  ) {
+    const updateData: any = {
+      ownerId: owner.id,
+      status: ticketData.used ? TicketStatus.USED : TicketStatus.ACTIVE,
+      lastSyncedAt: new Date(),
+    };
+
+    // Si el ticket cambió de zona, actualizar
+    if (zoneId !== null && existingTicket.zoneId !== zoneId) {
+      updateData.zoneId = zoneId;
+      
+      // Si tenía una zona anterior, decrementar su contador
+      if (existingTicket.zoneId) {
+        await this.decrementZoneSoldCount(existingTicket.zoneId);
+      }
+    }
+
+    if (ticketData.used && !existingTicket.usedAt) {
+      updateData.usedAt = new Date();
+    }
+
+    const updatedTicket = await this.prisma.ticket.update({
+      where: { id: existingTicket.id },
+      data: updateData,
+    });
+
+    this.logger.log(`Ticket updated: ${ticketData.ticketId}`);
+    return updatedTicket;
+  }
+
+  private async decrementZoneSoldCount(zoneId: string) {
+    try {
+      await this.prisma.eventZone.update({
+        where: { id: zoneId },
+        data: {
+          sold: {
+            decrement: 1,
+          },
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Error decrementing zone sold count for zone ${zoneId}:`, error);
+    }
+  }
+
+  private async createNewTicket(
+    ticketData: SyncTicketDto,
+    eventId: string,
+    ownerId: string,
+    originalBuyerId: string,
+    zoneId: string | null
+  ) {
+    return await this.prisma.ticket.create({
+      data: {
+        blockchainTicketId: ticketData.ticketId,
+        eventId: eventId,
+        zoneId: zoneId,
+        ownerId: ownerId,
+        originalBuyerId: originalBuyerId,
+        mintedAt: new Date(ticketData.mintedAt * 1000),
+        status: ticketData.used ? TicketStatus.USED : TicketStatus.ACTIVE,
+        usedAt: ticketData.used ? new Date() : null,
+        lastSyncedAt: new Date(),
+      },
+    });
   }
 
   async syncTicketResale(ticketId: string, seller: string, buyer: string, price: string) {
     try {
       const ticket = await this.prisma.ticket.findUnique({
         where: { blockchainTicketId: ticketId },
+        include: {
+          event: true,
+        },
       });
+      
       if (!ticket) {
         this.logger.warn(`Ticket not found for resale: ${ticketId}`);
         return null;
       }
 
-      const buyerUser = await this.prisma.user.findUnique({
-        where: { walletAddress: buyer },
-      });
-
+      // Buscar o crear usuario comprador
+      const buyerUser = await this.findOrCreateUserByWallet(buyer);
       if (!buyerUser) {
-        this.logger.warn(`Buyer not found: ${buyer}`);
+        this.logger.warn(`Failed to find/create buyer: ${buyer}`);
         return null;
       }
 
+      // Actualizar owner del ticket
       await this.prisma.ticket.update({
         where: { id: ticket.id },
-        data: { ownerId: buyerUser.id },
+        data: { 
+          ownerId: buyerUser.id,
+          lastSyncedAt: new Date(),
+        },
       });
 
+      // Manejar listing del marketplace
       const activeListing = await this.prisma.marketplaceListing.findFirst({
         where: {
           ticketId: ticket.id,
@@ -271,6 +405,21 @@ export class BlockchainSyncService {
             status: 'SOLD',
             buyerId: buyerUser.id,
             soldAt: new Date(),
+            blockchainTxHash: ticketId, // O el hash de la transacción real
+            updatedAt: new Date(),
+          },
+        });
+      } else {
+        // Crear un registro histórico si no había listing activo
+        await this.prisma.marketplaceListing.create({
+          data: {
+            ticketId: ticket.id,
+            sellerId: ticket.ownerId, // El anterior owner
+            buyerId: buyerUser.id,
+            price: BigInt(price),
+            status: 'SOLD',
+            soldAt: new Date(),
+            blockchainTxHash: ticketId,
           },
         });
       }
@@ -283,4 +432,5 @@ export class BlockchainSyncService {
     }
   }
 }
+
 

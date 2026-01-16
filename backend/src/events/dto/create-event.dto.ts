@@ -11,14 +11,40 @@ import {
   MaxLength,
   MinDate,
   IsDate,
+  IsArray,
+  ValidateNested,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export class EventZoneDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name: string;
+
+  @IsNumber()
+  @Min(0)
+  @Max(1000000)
+  @Type(() => Number)
+  price: number;
+
+  @IsNumber()
+  @Min(1)
+  @Max(1000000)
+  @Type(() => Number)
+  capacity: number;
+}
 
 export class CreateEventDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
   blockchainEventId?: string;
+
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -37,6 +63,19 @@ export class CreateEventDto {
   @MaxLength(2000)
   description?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  location?: string;
+
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100, { message: 'Cannot specify more than 100 zones' })
+  @ValidateNested({ each: true })
+  @Type(() => EventZoneDto)
+  zones?: EventZoneDto[];
+
   @IsDate()
   @MinDate(new Date(Date.now() - 60 * 1000), { // Resta 1 minuto para margen
     message: 'eventStartTime must be in the future',
@@ -44,11 +83,13 @@ export class CreateEventDto {
   @Type(() => Date)
   eventStartTime: Date; // Cambia a Date en lugar de string
   
-  @IsNumber()
-  @Min(1)
-  @Max(1000000)
-  @Type(() => Number)
-  ticketsTotal: number;
+  @IsDate()
+  @MinDate(new Date(Date.now() - 60 * 1000), { // Resta 1 minuto para margen
+    message: 'eventEndTime must be in the future',
+  })
+  @Type(() => Date)
+  eventEndTime: Date;
+
 
   @IsOptional()
   @IsBoolean()

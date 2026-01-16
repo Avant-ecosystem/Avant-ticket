@@ -139,6 +139,7 @@ service Ticket {
       ticket_ids: vec u256,
       buyer: actor_id,
       amount: u256,
+      zones: vec opt str,
     };
     /// Ticket revendido
     TicketResold: struct {
@@ -206,11 +207,11 @@ service Ticket {
 
 service Market {
   /// Comprar un ticket listado en el Marketplace
-  BuyTicket : (ticket_id: u256) -> null;
+  BuyTicket : (buyer: actor_id, ticket_id: u256) -> null;
   /// Cancelar un listado activo
-  CancelListing : (ticket_id: u256) -> null;
+  CancelListing : (seller: actor_id, ticket_id: u256) -> null;
   /// Listar un ticket para reventa en el Marketplace
-  ListTicket : (ticket_id: u256, price: u256) -> null;
+  ListTicket : (seller: actor_id, ticket_id: u256, price: u256) -> null;
   /// Obtener todos los listados activos
   query GetAllListings : () -> vec Listing;
   /// Obtener información de un listado
@@ -232,6 +233,7 @@ service Market {
       ticket_ids: vec u256,
       buyer: actor_id,
       amount: u256,
+      zones: vec opt str,
     };
     /// Ticket revendido
     TicketResold: struct {
@@ -296,4 +298,3 @@ service Market {
     };
   }
 };
-

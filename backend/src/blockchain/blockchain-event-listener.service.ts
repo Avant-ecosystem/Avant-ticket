@@ -177,7 +177,6 @@ export class BlockchainEventListenerService implements OnModuleInit, OnModuleDes
 
       if (pendingEvent) {
         this.logger.log(`Found pending event ${pendingEvent.id} with all configuration data. Using those values.`);
-        ticketsTotal = pendingEvent.ticketsTotal.toString();
         resaleConfig = {
           enabled: pendingEvent.resaleEnabled,
           maxPrice: pendingEvent.maxResalePrice ? pendingEvent.maxResalePrice.toString() : undefined,
@@ -204,7 +203,6 @@ export class BlockchainEventListenerService implements OnModuleInit, OnModuleDes
         organizer: organizerWalletAddress,
         metadataHash: metadataHashHex,
         eventStartTime: Number(data.event_start_time),
-        ticketsTotal,
         resaleConfig,
         commissionConfig,
       };

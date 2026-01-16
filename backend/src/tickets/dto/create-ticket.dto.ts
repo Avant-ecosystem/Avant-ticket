@@ -1,4 +1,6 @@
-import { IsString, IsNotEmpty, IsOptional, IsDateString } from 'class-validator';
+// tickets/dto/create-ticket.dto.ts
+import { IsString, IsNotEmpty, IsOptional, IsDate, ValidateIf } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateTicketDto {
   @IsString()
@@ -15,9 +17,9 @@ export class CreateTicketDto {
 
   @IsOptional()
   @IsString()
-  zone?: string;
+  zoneId?: string;
 
-  @IsDateString()
-  mintedAt: string;
+  @IsDate()
+  @Type(() => Date)
+  mintedAt: Date;
 }
-

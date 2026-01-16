@@ -26,6 +26,25 @@ enum ListingStatus {
   CANCELLED
 }
 
+// Nuevo modelo para definir zonas de eventos
+model EventZone {
+  id        String  @id @default(uuid())
+  eventId   String
+  event     Event   @relation(fields: [eventId], references: [id])
+  name      String
+  price     Decimal
+  capacity  BigInt
+  sold      BigInt  @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  tickets   Ticket[]
+  
+  @@unique([eventId, name])
+  @@index([eventId])
+}
+
 model User {
   id            String    @id @default(uuid())
   email         String    @unique
@@ -63,11 +82,12 @@ model Event {
   organizerId       String
   organizer         User     @relation(fields: [organizerId], references: [id])
   metadataHash      String
+  imageUrl          String?
   name              String?
   description       String?
+  location          String?
   eventStartTime    DateTime
-  ticketsMinted     BigInt   @default(0)
-  ticketsTotal      BigInt
+  eventEndTime      DateTime?
   active            Boolean  @default(true)
   resaleEnabled     Boolean  @default(true)
   maxResalePrice    BigInt?
@@ -80,6 +100,8 @@ model Event {
   updatedAt         DateTime @updatedAt
   lastSyncedAt      DateTime?
 
+
+  zones             EventZone[]
   tickets           Ticket[]
 
   @@index([organizerId])
@@ -92,11 +114,12 @@ model Ticket {
   blockchainTicketId String  @unique
   eventId           String
   event             Event    @relation(fields: [eventId], references: [id])
+  zoneId            String?
+  zone              EventZone? @relation(fields: [zoneId], references: [id])
   ownerId           String
   owner             User     @relation("OwnedTickets", fields: [ownerId], references: [id])
   originalBuyerId   String
   originalBuyer     User     @relation("OriginalBuyerTickets", fields: [originalBuyerId], references: [id])
-  zone              String?
   status            TicketStatus @default(ACTIVE)
   usedAt            DateTime?
   mintedAt          DateTime
@@ -111,6 +134,7 @@ model Ticket {
   @@index([originalBuyerId])
   @@index([blockchainTicketId])
   @@index([status])
+  @@index([zoneId])
 }
 
 model MarketplaceListing {

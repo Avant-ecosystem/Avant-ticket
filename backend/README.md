@@ -434,9 +434,13 @@ Crea un nuevo evento (ORGANIZER o ADMIN).
 {
   "blockchainEventId": "1", // Opcional, se genera si no se proporciona
   "metadataHash": "0x1234567890abcdef...",
+  "imageUrl":"hhtps..."
   "name": "Concierto de Rock",
   "description": "Gran concierto de rock",
+  "location":"Av.los alamos",
+  "price":1094.99,
   "eventStartTime": "2024-12-31T20:00:00Z",
+  "eventStartTime":"2024-12-31T25:00:00Z",
   "ticketsTotal": 1000,
   "resaleEnabled": true,
   "maxResalePrice": 5000000000000, // En smallest unit

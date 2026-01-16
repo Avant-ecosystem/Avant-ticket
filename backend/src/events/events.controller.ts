@@ -61,7 +61,7 @@ export class EventsController {
 
   @Post(':id/mint-tickets')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ORGANIZER', 'ADMIN')
+  @Roles('ORGANIZER', 'ADMIN', 'USER')
   @HttpCode(HttpStatus.CREATED)
   async mintTickets(
     @Param('id', ParseUUIDPipe) id: string,

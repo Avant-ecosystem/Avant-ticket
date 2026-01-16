@@ -1,7 +1,6 @@
 /* eslint-disable */
 
-import { GearApi, BaseGearProgram} from '@gear-js/api';
-import { hexToString } from '@polkadot/util';
+import { GearApi, BaseGearProgram } from '@gear-js/api';
 import { TypeRegistry } from '@polkadot/types';
 import { TransactionBuilder, ActorId, QueryBuilder, getServiceNamePrefix, getFnNamePrefix, ZERO_ADDRESS } from 'sails-js';
 
@@ -38,7 +37,7 @@ export class SailsProgram {
     return this._program.id;
   }
 
-  newCtorFromCode(code: Uint8Array | Buffer | typeof hexToString, admin: ActorId, vmt_contract: ActorId, platform_fee_recipient: ActorId): TransactionBuilder<null> {
+  newCtorFromCode(code: Uint8Array | Buffer , admin: ActorId, vmt_contract: ActorId, platform_fee_recipient: ActorId): TransactionBuilder<null> {
     const builder = new TransactionBuilder<null>(
       this.api,
       this.registry,
@@ -434,7 +433,7 @@ export class Ticket {
   /**
    * Tickets minteados en venta primaria
   */
-  public subscribeToTicketsMintedEvent(callback: (data: { event_id: number | string | bigint; ticket_ids: Array<number | string | bigint>; buyer: ActorId; amount: number | string | bigint }) => void | Promise<void>): Promise<() => void> {
+  public subscribeToTicketsMintedEvent(callback: (data: { event_id: number | string | bigint; ticket_ids: Array<number | string | bigint>; buyer: ActorId; amount: number | string | bigint; zones: Array<string | null> }) => void | Promise<void>): Promise<() => void> {
     return this._program.api.gearEvents.subscribeToGearEvent('UserMessageSent', ({ data: { message } }) => {;
       if (!message.source.eq(this._program.programId) || !message.destination.eq(ZERO_ADDRESS)) {
         return;
@@ -442,7 +441,7 @@ export class Ticket {
 
       const payload = message.payload.toHex();
       if (getServiceNamePrefix(payload) === 'Ticket' && getFnNamePrefix(payload) === 'TicketsMinted') {
-        callback(this._program.registry.createType('(String, String, {"event_id":"U256","ticket_ids":"Vec<U256>","buyer":"[u8;32]","amount":"U256"})', message.payload)[2].toJSON() as unknown as { event_id: number | string | bigint; ticket_ids: Array<number | string | bigint>; buyer: ActorId; amount: number | string | bigint });
+        callback(this._program.registry.createType('(String, String, {"event_id":"U256","ticket_ids":"Vec<U256>","buyer":"[u8;32]","amount":"U256","zones":"Vec<Option<String>>"})', message.payload)[2].toJSON() as unknown as { event_id: number | string | bigint; ticket_ids: Array<number | string | bigint>; buyer: ActorId; amount: number | string | bigint; zones: Array<string | null> });
       }
     });
   }
@@ -614,7 +613,7 @@ export class Market {
   /**
    * Comprar un ticket listado en el Marketplace
   */
-  public buyTicket(ticket_id: number | string | bigint): TransactionBuilder<null> {
+  public buyTicket(buyer: ActorId, ticket_id: number | string | bigint): TransactionBuilder<null> {
     if (!this._program.programId) throw new Error('Program ID is not set');
     return new TransactionBuilder<null>(
       this._program.api,
@@ -622,8 +621,8 @@ export class Market {
       'send_message',
       'Market',
       'BuyTicket',
-      ticket_id,
-      'U256',
+      [buyer, ticket_id],
+      '([u8;32], U256)',
       'Null',
       this._program.programId,
     );
@@ -632,7 +631,7 @@ export class Market {
   /**
    * Cancelar un listado activo
   */
-  public cancelListing(ticket_id: number | string | bigint): TransactionBuilder<null> {
+  public cancelListing(seller: ActorId, ticket_id: number | string | bigint): TransactionBuilder<null> {
     if (!this._program.programId) throw new Error('Program ID is not set');
     return new TransactionBuilder<null>(
       this._program.api,
@@ -640,8 +639,8 @@ export class Market {
       'send_message',
       'Market',
       'CancelListing',
-      ticket_id,
-      'U256',
+      [seller, ticket_id],
+      '([u8;32], U256)',
       'Null',
       this._program.programId,
     );
@@ -650,7 +649,7 @@ export class Market {
   /**
    * Listar un ticket para reventa en el Marketplace
   */
-  public listTicket(ticket_id: number | string | bigint, price: number | string | bigint): TransactionBuilder<null> {
+  public listTicket(seller: ActorId, ticket_id: number | string | bigint, price: number | string | bigint): TransactionBuilder<null> {
     if (!this._program.programId) throw new Error('Program ID is not set');
     return new TransactionBuilder<null>(
       this._program.api,
@@ -658,8 +657,8 @@ export class Market {
       'send_message',
       'Market',
       'ListTicket',
-      [ticket_id, price],
-      '(U256, U256)',
+      [seller, ticket_id, price],
+      '([u8;32], U256, U256)',
       'Null',
       this._program.programId,
     );
@@ -732,7 +731,7 @@ export class Market {
   /**
    * Tickets minteados en venta primaria
   */
-  public subscribeToTicketsMintedEvent(callback: (data: { event_id: number | string | bigint; ticket_ids: Array<number | string | bigint>; buyer: ActorId; amount: number | string | bigint }) => void | Promise<void>): Promise<() => void> {
+  public subscribeToTicketsMintedEvent(callback: (data: { event_id: number | string | bigint; ticket_ids: Array<number | string | bigint>; buyer: ActorId; amount: number | string | bigint; zones: Array<string | null> }) => void | Promise<void>): Promise<() => void> {
     return this._program.api.gearEvents.subscribeToGearEvent('UserMessageSent', ({ data: { message } }) => {;
       if (!message.source.eq(this._program.programId) || !message.destination.eq(ZERO_ADDRESS)) {
         return;
@@ -740,7 +739,7 @@ export class Market {
 
       const payload = message.payload.toHex();
       if (getServiceNamePrefix(payload) === 'Market' && getFnNamePrefix(payload) === 'TicketsMinted') {
-        callback(this._program.registry.createType('(String, String, {"event_id":"U256","ticket_ids":"Vec<U256>","buyer":"[u8;32]","amount":"U256"})', message.payload)[2].toJSON() as unknown as { event_id: number | string | bigint; ticket_ids: Array<number | string | bigint>; buyer: ActorId; amount: number | string | bigint });
+        callback(this._program.registry.createType('(String, String, {"event_id":"U256","ticket_ids":"Vec<U256>","buyer":"[u8;32]","amount":"U256","zones":"Vec<Option<String>>"})', message.payload)[2].toJSON() as unknown as { event_id: number | string | bigint; ticket_ids: Array<number | string | bigint>; buyer: ActorId; amount: number | string | bigint; zones: Array<string | null> });
       }
     });
   }

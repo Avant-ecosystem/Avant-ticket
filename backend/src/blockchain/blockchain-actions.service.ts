@@ -179,18 +179,22 @@ export class BlockchainActionsService {
 
   // ========== MÉTODOS DE MARKETPLACE ==========
 
-  async listTicket(ticketId: bigint, price: bigint) {
-    const builder = this.marketService.listTicket(ticketId, price);
+  async listTicket( seller: string, ticketId: bigint, price: bigint) {
+    const sellerId = decodeAddress(seller);
+    const builder = this.marketService.listTicket(sellerId, ticketId, price);
     return await this.executeTransaction(builder);
   }
 
-  async buyTicket(ticketId: bigint) {
-    const builder = this.marketService.buyTicket(ticketId);
+  async buyTicket( buyer: string, ticketId: bigint) {
+    const buyerId = decodeAddress(buyer);
+    const builder = this.marketService.buyTicket(buyerId, ticketId);
     return await this.executeTransaction(builder);
   }
 
-  async cancelListing(ticketId: bigint) {
-    const builder = this.marketService.cancelListing(ticketId);
+  
+  async cancelListing(seller: string, ticketId: bigint) {
+    const sellerId = decodeAddress(seller);
+    const builder = this.marketService.cancelListing(sellerId, ticketId);
     return await this.executeTransaction(builder);
   }
 

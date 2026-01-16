@@ -105,46 +105,44 @@ export class AuthService {
   }
 
   async register(registerDto: RegisterDto) {
-    // Validar email único
+    // 1️⃣ Validar email único
     const existingEmail = await this.usersService.findByEmail(registerDto.email);
     if (existingEmail) {
       throw new BadRequestException('User with this email already exists');
     }
-
-    // Validar DNI único
+  
+    // 2️⃣ Validar DNI único
     const existingDni = await this.usersService.findByDni(registerDto.dni);
     if (existingDni) {
       throw new BadRequestException('User with this DNI already exists');
     }
-
-    // Validar username único si se proporciona
+  
+    // 3️⃣ Validar username único (si se envía)
     if (registerDto.username) {
-      const existingUsername = await this.usersService.findByEmailOrUsername(registerDto.username);
-      if (existingUsername && existingUsername.username === registerDto.username) {
+      const existingUsername = await this.usersService.findByUsername(registerDto.username);
+      if (existingUsername) {
         throw new BadRequestException('User with this username already exists');
       }
     }
-
-    // Validar walletAddress si se proporciona
+  
+    // 4️⃣ Validar walletAddress (si se envía)
     if (registerDto.walletAddress) {
       try {
         decodeAddress(registerDto.walletAddress);
-        const existingWallet = await this.usersService.findByWalletAddress(registerDto.walletAddress);
-        if (existingWallet) {
-          throw new BadRequestException('User with this wallet address already exists');
-        }
-      } catch (error) {
-        if (error instanceof BadRequestException) {
-          throw error;
-        }
+      } catch {
         throw new BadRequestException('Invalid wallet address format');
       }
+  
+      const existingWallet = await this.usersService.findByWalletAddress(registerDto.walletAddress);
+      if (existingWallet) {
+        throw new BadRequestException('User with this wallet address already exists');
+      }
     }
-
-    // Hashear contraseña
+  
+    // 5️⃣ Hashear contraseña
     const hashedPassword = await this.hashPassword(registerDto.password);
-
-    // Crear usuario
+  
+    // 6️⃣ Crear usuario
     const user = await this.usersService.create({
       email: registerDto.email,
       password: hashedPassword,
@@ -159,20 +157,21 @@ export class AuthService {
       walletAddress: registerDto.walletAddress,
       role: 'USER',
     });
-
+  
+    // 7️⃣ Generar JWT
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
     };
-
+  
     const accessToken = this.jwtService.sign(payload);
-
+  
     this.logger.log(`New user registered: ${registerDto.email}`);
-
-    // Excluir password del objeto user en la respuesta
+  
+    // 8️⃣ Respuesta sin password
     const { password, ...userResponse } = user;
-
+  
     return {
       access_token: accessToken,
       token_type: 'Bearer',

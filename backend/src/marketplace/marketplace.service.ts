@@ -20,19 +20,39 @@ export class MarketplaceService {
     if (obj === null || obj === undefined) {
       return obj;
     }
+
   
+    // ✅ FECHAS
+    if (obj instanceof Date) {
+      return obj.toISOString();
+    }
+  
+    // ✅ BIGINT
     if (typeof obj === 'bigint') {
       return obj.toString();
     }
   
+    // ✅ ARRAYS
     if (Array.isArray(obj)) {
       return obj.map(item => this.serializeBigInt(item));
     }
+
+    if (obj.zone) {
+      obj.zone = {
+        id: obj.zone.id,
+        name: obj.zone.name,
+        price: obj.zone.price ? (typeof obj.zone.price === 'object' && 'toNumber' in obj.zone.price ? obj.zone.price.toNumber() : obj.zone.price) : 0,
+        capacity: obj.zone.capacity?.toString() || '0',
+        sold: obj.zone.sold?.toString() || '0',
+      };
+    }
   
+    // ❌ PROMISES (seguridad)
     if (typeof obj === 'object' && typeof obj.then === 'function') {
       return obj;
     }
   
+    // ✅ OBJETOS NORMALES
     if (typeof obj === 'object') {
       const transformed: any = {};
       for (const key in obj) {
@@ -101,10 +121,16 @@ export class MarketplaceService {
       throw new NotFoundException('Seller not found');
     }
 
+    if (!seller.walletAddress) {
+      throw new NotFoundException('Seller Wallet not found');
+    }
+    const sellerWallet = seller.walletAddress
+
     try {
       // Listar ticket en blockchain
       this.logger.log(`Listing ticket ${ticket.blockchainTicketId} on blockchain`);
       const blockchainResult = await this.blockchainActions.listTicket(
+        sellerWallet,
         BigInt(ticket.blockchainTicketId),
         BigInt(createListingDto.price),
       );
@@ -165,11 +191,10 @@ export class MarketplaceService {
         include: {
           ticket: {
             include: {
+              zone: true,
               event: true,
               owner: {
                 select: {
-                  id: true,
-                  walletAddress: true,
                   username: true,
                 },
               },
@@ -177,8 +202,6 @@ export class MarketplaceService {
           },
           seller: {
             select: {
-              id: true,
-              walletAddress: true,
               username: true,
             },
           },
@@ -207,6 +230,7 @@ export class MarketplaceService {
       include: {
         ticket: {
           include: {
+            zone: true,
             event: true,
             owner: true,
           },
@@ -270,11 +294,14 @@ export class MarketplaceService {
     if (!buyer) {
       throw new NotFoundException('Buyer not found');
     }
-
+    if (!buyer.walletAddress) {
+      throw new NotFoundException('Buyer wallet not found');
+    }
+    const buyerWalletAddress = buyer.walletAddress
     try {
       // Comprar ticket en blockchain
       this.logger.log(`Purchasing ticket ${ticket.blockchainTicketId} from listing`);
-      const blockchainResult = await this.blockchainActions.buyTicket(BigInt(ticket.blockchainTicketId));
+      const blockchainResult = await this.blockchainActions.buyTicket(buyerWalletAddress,BigInt(ticket.blockchainTicketId));
       
       this.logger.log(`Ticket purchased on blockchain: ${blockchainResult.hash}`);
 
@@ -323,11 +350,21 @@ export class MarketplaceService {
     if (!ticket) {
       throw new NotFoundException('Ticket not found');
     }
+    const owner = await this.prisma.user.findUnique({
+      where: { id: ticket.ownerId },
+    });
+    if(!owner){
+      throw new NotFoundException('Owner not found');
+    }
 
+    if(!owner.walletAddress){
+      throw new NotFoundException('Owner not found');
+    }
+    const sellerWallet = owner.walletAddress
     try {
       // Cancelar listing en blockchain
       this.logger.log(`Cancelling listing for ticket ${ticket.blockchainTicketId}`);
-      await this.blockchainActions.cancelListing(BigInt(ticket.blockchainTicketId));
+    await this.blockchainActions.cancelListing(sellerWallet,BigInt(ticket.blockchainTicketId));
 
       // Actualizar en DB
       const updatedListing = await this.prisma.marketplaceListing.update({

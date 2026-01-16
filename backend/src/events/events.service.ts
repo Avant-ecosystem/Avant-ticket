@@ -4,6 +4,9 @@ import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { BlockchainActionsService } from '../blockchain/blockchain-actions.service';
 import { decodeAddress } from '@polkadot/util-crypto';
+import { Decimal } from '@prisma/client/runtime/index-browser';
+import { TicketStatus } from '@prisma/client';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class EventsService {
@@ -18,45 +21,97 @@ export class EventsService {
   private serializeEvent(event: any) {
     if (!event) return event;
     
-    // Calcular tickets minteados
-    const ticketsMinted = event._count?.tickets || event.tickets?.length || 0;
-    const ticketsTotal = typeof event.ticketsTotal === 'bigint' 
-      ? event.ticketsTotal 
-      : BigInt(event.ticketsTotal || 0);
+    // Verificar si el evento tiene zonas
+    const hasZones = event.zones && Array.isArray(event.zones);
     
-    const ticketsMintedBigInt = BigInt(ticketsMinted);
+    // Calcular ticketsTotal desde las zonas (nuevo cálculo)
+    let ticketsTotal = BigInt(0);
+    let ticketsMintedFromZones = BigInt(0);
+    
+    if (hasZones) {
+      ticketsTotal = event.zones.reduce((total: bigint, zone: any) => {
+        const capacity = typeof zone.capacity === 'bigint' 
+          ? zone.capacity 
+          : BigInt(zone.capacity || 0);
+        return total + capacity;
+      }, BigInt(0));
+      
+      ticketsMintedFromZones = event.zones.reduce((total: bigint, zone: any) => {
+        const sold = typeof zone.sold === 'bigint' 
+          ? zone.sold 
+          : BigInt(zone.sold || 0);
+        return total + sold;
+      }, BigInt(0));
+    }
+    
+    // Calcular tickets minteados desde la relación tickets (backup)
+    const ticketsMintedFromRelation = event._count?.tickets || event.tickets?.length || 0;
+    
+    // Usar el mayor valor entre tickets minteados de zonas y de relación
+    const ticketsMintedBigInt = ticketsMintedFromZones > BigInt(0) 
+      ? ticketsMintedFromZones 
+      : BigInt(ticketsMintedFromRelation);
+    
     const ticketsRemaining = ticketsTotal - ticketsMintedBigInt;
     const mintPercentage = ticketsTotal > 0n
       ? Number((ticketsMintedBigInt * 100n) / ticketsTotal)
       : 0;
   
+    // Serializar zonas si existen
+    const serializedZones = hasZones
+      ? event.zones.map((zone: any) => ({
+          id: zone.id,
+          name: zone.name,
+          price: zone.price instanceof Decimal 
+            ? zone.price.toNumber() 
+            : Number(zone.price || 0),
+          capacity: (typeof zone.capacity === 'bigint' 
+            ? zone.capacity.toString() 
+            : String(zone.capacity || 0)),
+          sold: (typeof zone.sold === 'bigint' 
+            ? zone.sold.toString() 
+            : String(zone.sold || 0)),
+          available: (typeof zone.capacity === 'bigint' && typeof zone.sold === 'bigint'
+            ? (zone.capacity - zone.sold).toString()
+            : String((Number(zone.capacity || 0) - Number(zone.sold || 0)))),
+        }))
+      : [];
+  
     const serialized = {
       ...event,
+      // Calcular campos basados en zonas
       ticketsTotal: ticketsTotal.toString(),
       ticketsMinted: ticketsMintedBigInt.toString(),
       ticketsRemaining: ticketsRemaining.toString(),
       mintPercentage: mintPercentage.toFixed(2),
+      
+      // Serializar otros campos
       maxResalePrice: event.maxResalePrice 
         ? (typeof event.maxResalePrice === 'bigint' 
             ? event.maxResalePrice.toString() 
-            : event.maxResalePrice.toString())
+            : String(event.maxResalePrice || ''))
         : null,
-      // Asegurar que _count no se incluya en la respuesta si no es necesario
-      _count: undefined,
+      
+      // Serializar zones
+      zones: serializedZones,
+      
     };
-    
-    // Remover _count del objeto final
-    delete serialized._count;
     
     // Si hay tickets incluidos, serializarlos también
     if (event.tickets && Array.isArray(event.tickets)) {
       serialized.tickets = event.tickets.map((ticket: any) => ({
         ...ticket,
-        tokenId: ticket.tokenId?.toString() || null,
-        // Si el ticket tiene owner con BigInt, serializarlo
+        blockchainTicketId: ticket.blockchainTicketId,
+        // Serializar zona si el ticket tiene relación con EventZone
+        zone: ticket.zone ? {
+          id: ticket.zone.id,
+          name: ticket.zone.name,
+        } : null,
+        // Si el ticket tiene owner, serializarlo
         owner: ticket.owner ? {
-          ...ticket.owner,
-          // Aquí puedes agregar más serializaciones si es necesario
+          id: ticket.owner.id,
+          username: ticket.owner.username,
+          email: ticket.owner.email,
         } : ticket.owner,
       }));
     }
@@ -69,144 +124,161 @@ export class EventsService {
     const organizer = await this.prisma.user.findUnique({
       where: { id: userId },
     });
-
+  
     if (!organizer) {
       throw new NotFoundException('Organizer not found');
     }
-
+  
+    if (!organizer.walletAddress) {
+      throw new BadRequestException('Organizer address is required');
+    }
+  
+    // Validaciones
+    if (!createEventDto.zones || createEventDto.zones.length === 0) {
+      throw new BadRequestException('Zones are required');
+    }
+  
+    if (!createEventDto.resaleEnabled) {
+      throw new BadRequestException('Resale is not enabled');
+    }
+  
     try {
-      // Preparar datos para blockchain
-      const organizerAddress = organizer.walletAddress;
-      const organizerId = decodeAddress(organizerAddress);
-      const metadataHash = Buffer.from(createEventDto.metadataHash.replace('0x', ''), 'hex');
-      const metadataArray = Array.from(metadataHash);
-
+      // Calcular valores
+      const ticketsTotal = createEventDto.zones.reduce((total, zone) => {
+        return total + BigInt(zone.capacity);
+      }, BigInt(0));
+  
       const eventStartTime = Math.floor(new Date(createEventDto.eventStartTime).getTime());
-      const ticketsTotal = BigInt(createEventDto.ticketsTotal);
-      if(!createEventDto.resaleEnabled){
-        throw new BadRequestException('Resale is not enabled');
-       }
-       const resaleConfig = {
+  
+      this.logger.log(`Total tickets from zones: ${ticketsTotal} (${createEventDto.zones.length} zones)`);
+  
+      // Configuraciones
+      const resaleConfig = {
         enabled: createEventDto.resaleEnabled,
         max_price: createEventDto.maxResalePrice ? BigInt(createEventDto.maxResalePrice) : null,
         resale_start_time: createEventDto.resaleStartTime
-          ? BigInt(new Date(createEventDto.resaleStartTime).getTime()) // Milisegundos
+          ? BigInt(new Date(createEventDto.resaleStartTime).getTime())
           : null,
         resale_end_time: createEventDto.resaleEndTime
-          ? BigInt(new Date(createEventDto.resaleEndTime).getTime()) // Milisegundos
+          ? BigInt(new Date(createEventDto.resaleEndTime).getTime())
           : null,
       };
-
+  
       const commissionConfig = {
         seller_percentage: createEventDto.sellerPercentage ?? 8500,
         organizer_percentage: createEventDto.organizerPercentage ?? 1000,
         platform_percentage: createEventDto.platformPercentage ?? 500,
       };
-
-      if(!organizerAddress){
-        throw new BadRequestException('Organizer address is required');
-      }
-      // 1. Crear evento en blockchain
-      this.logger.log(`Creating event on blockchain for organizer ${organizerAddress}`);
-
-
-      const blockchainResult = await this.blockchainActions.createEvent(
-        organizerAddress,
-        createEventDto.metadataHash as `0x${string}`,
-        BigInt(eventStartTime),
-        ticketsTotal,
-        resaleConfig,
-        commissionConfig,
-      );
-
-      this.logger.log(`Event created on blockchain: ${blockchainResult.hash}`);
-
-      // 2. Intentar obtener el event_id del resultado de la transacción
-      // Si el smart contract devuelve el event_id en la respuesta, lo usamos
-      let blockchainEventId: string | undefined = createEventDto.blockchainEventId;
+  
+      // === PASO 1: GUARDAR EVENTO COMO PENDIENTE EN BASE DE DATOS ===
+      const pendingTransactionHash = `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
-      // Intentar extraer event_id del resultado de la transacción
-      // NOTA: En GearApi/Sails, el event_id normalmente NO viene en la respuesta de la transacción
-      // Se obtiene del evento EventCreated que se emite después. Por eso usamos un placeholder temporal.
-      if (blockchainResult.response) {
-        try {
-          // El resultado puede tener diferentes formatos dependiendo del smart contract
-          // Intentamos obtener el event_id de diferentes formas posibles
-          const result = blockchainResult.response;
-          
-          // Si es un objeto con event_id
-          if (result && typeof result === 'object') {
-            const resultObj = result as any;
-            
-            // Intentar llamar toHuman si existe
-            let processedResult = resultObj;
-            if (resultObj.toHuman && typeof resultObj.toHuman === 'function') {
-              try {
-                processedResult = resultObj.toHuman();
-              } catch (e) {
-                this.logger.warn(`Could not call toHuman: ${e.message}`);
-              }
-            }
-            
-            // Buscar event_id en diferentes lugares
-            if (processedResult && typeof processedResult === 'object') {
-              if (processedResult.event_id !== undefined) {
-                blockchainEventId = String(processedResult.event_id);
-              } else if (processedResult.ok?.event_id !== undefined) {
-                blockchainEventId = String(processedResult.ok.event_id);
-              } else if (processedResult.Err) {
-                // Si hay error, loguearlo
-                this.logger.warn(`Transaction returned error: ${JSON.stringify(processedResult.Err)}`);
-              } else {
-                // Log completo del resultado para debugging
-                this.logger.debug(`Transaction result structure: ${JSON.stringify(processedResult)}`);
-              }
-            }
-          }
-          
-          if (blockchainEventId && blockchainEventId !== createEventDto.blockchainEventId) {
-            this.logger.log(`Event ID extracted from blockchain result: ${blockchainEventId}`);
-          } else {
-            this.logger.warn(`Could not extract event_id from transaction result. Will use pending placeholder.`);
-          }
-        } catch (error) {
-          this.logger.warn(`Error extracting event_id from transaction result: ${error.message}`);
-        }
-      } else {
-        this.logger.warn(`No result in blockchain transaction response. Will use pending placeholder.`);
-      }
-
-      // 3. Crear evento en DB
-      // Usamos el blockchainEventId si lo tenemos, sino usamos el hash como placeholder
-      // El evento se actualizará con el event_id real cuando llegue el EventCreated
       const dbEvent = await this.prisma.event.create({
         data: {
-          blockchainEventId: blockchainEventId || `pending-${blockchainResult.hash}`,
+          // Usar un placeholder temporal para blockchainEventId
+          blockchainEventId: pendingTransactionHash,
           metadataHash: createEventDto.metadataHash,
           name: createEventDto.name,
+          imageUrl: createEventDto.imageUrl ?? "",
           description: createEventDto.description,
+          location: createEventDto.location ?? "",
           eventStartTime: new Date(createEventDto.eventStartTime),
+          eventEndTime: new Date(createEventDto.eventEndTime),
           resaleStartTime: createEventDto.resaleStartTime ? new Date(createEventDto.resaleStartTime) : null,
           resaleEndTime: createEventDto.resaleEndTime ? new Date(createEventDto.resaleEndTime) : null,
-          ticketsTotal: createEventDto.ticketsTotal,
           maxResalePrice: createEventDto.maxResalePrice ? BigInt(createEventDto.maxResalePrice) : null,
           organizerId: userId,
           resaleEnabled: createEventDto.resaleEnabled ?? true,
           sellerPercentage: commissionConfig.seller_percentage,
           organizerPercentage: commissionConfig.organizer_percentage,
           platformPercentage: commissionConfig.platform_percentage,
+          zones: {
+            create: createEventDto.zones.map(zone => ({
+              name: zone.name,
+              price: new Decimal(zone.price),
+              capacity: BigInt(zone.capacity),
+              sold: BigInt(0),
+            })),
+          },
+        },
+        include: {
+          zones: true,
         },
       });
-
-      this.logger.log(`Event created in database: ${dbEvent.id}`);
+  
+      this.logger.log(`Event saved as pending in database: ${dbEvent.id}`);
+      this.logger.log(`Pending blockchainEventId placeholder: ${pendingTransactionHash}`);
+  
+      // === PASO 2: ENVIAR TRANSACCIÓN A BLOCKCHAIN ===
+      this.logger.log(`Creating event on blockchain for organizer ${organizer.walletAddress}`);
+  
+      const blockchainResult = await this.blockchainActions.createEvent(
+        organizer.walletAddress,
+        createEventDto.metadataHash as `0x${string}`,
+        BigInt(eventStartTime),
+        ticketsTotal,
+        resaleConfig,
+        commissionConfig,
+      );
+  
+      this.logger.log(`Transaction sent to blockchain: ${blockchainResult.hash}`);
+  
+  
+      // === PASO 4: MANEJAR RESPUESTA DE BLOCKCHAIN (OPCIONAL) ===
+      // Solo intentamos extraer event_id si viene en la respuesta inmediata
+      let immediateEventId: string | undefined;
       
+      if (blockchainResult.response) {
+        try {
+          const result = blockchainResult.response;
+          if (result && typeof result === 'object') {
+            const resultObj = result as any;
+            
+            if (resultObj.toHuman && typeof resultObj.toHuman === 'function') {
+              try {
+                const processedResult = resultObj.toHuman();
+                if (processedResult && typeof processedResult === 'object') {
+                  if (processedResult.event_id !== undefined) {
+                    immediateEventId = String(processedResult.event_id);
+                  } else if (processedResult.ok?.event_id !== undefined) {
+                    immediateEventId = String(processedResult.ok.event_id);
+                  }
+                }
+              } catch (e) {
+                this.logger.warn(`Could not process blockchain response: ${e.message}`);
+              }
+            }
+          }
+        } catch (error) {
+          this.logger.warn(`Error extracting event_id: ${error.message}`);
+        }
+      }
+  
+      // Si tenemos un event_id inmediato, actualizamos
+      if (immediateEventId) {
+        this.logger.log(`Immediate event ID received: ${immediateEventId}`);
+        await this.prisma.event.update({
+          where: { id: dbEvent.id },
+          data: {
+            blockchainEventId: immediateEventId,
+          },
+        });
+      } else {
+        this.logger.log(`Waiting for EventCreated blockchain event. Event remains as pending.`);
+        // El evento se actualizará cuando llegue el EventCreated desde el listener
+      }
+  
       return this.serializeEvent(dbEvent);
     } catch (error) {
       this.logger.error(`Error creating event:`, error);
+      
+      // Si hay error de blockchain, podemos marcar el evento como fallido
+      // Buscar si se creó un evento pendiente
+      
       if (error instanceof BadRequestException || error instanceof ForbiddenException) {
         throw error;
       }
-      throw new BadRequestException(`Failed to create event on blockchain: ${error.message}`);
+      throw new BadRequestException(`Failed to create event: ${error.message}`);
     }
   }
 
@@ -227,6 +299,7 @@ export class EventsService {
               username: true,
             },
           },
+          zones: true,
           _count: {
             select: {
               tickets: true,
@@ -263,8 +336,10 @@ export class EventsService {
 
           },
         },
+        zones: true,
         tickets: {
           include: {
+            zone: true,
             owner: {
               select: {
                 id: true,
@@ -337,92 +412,134 @@ export class EventsService {
     zones?: string[],
   ) {
     const event = await this.findOne(eventId);
+  
+    // Permisos
 
-    // Verificar permisos: solo organizador o admin
-    if (event.organizerId !== userId) {
-      const user = await this.prisma.user.findUnique({ where: { id: userId } });
-      if (!user || user.role !== 'ADMIN') {
-        throw new ForbiddenException('Only the organizer or admin can mint tickets');
-      }
-    }
-
-    // Validar que el evento esté activo
     if (!event.active) {
       throw new BadRequestException('Cannot mint tickets for an inactive event');
     }
-
-    // Validar que no se exceda el total de tickets
-    const currentTickets = await this.prisma.ticket.count({
-      where: { eventId: event.id },
+  
+    const eventWithZones = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: { zones: true },
     });
-
-    if (BigInt(currentTickets) + BigInt(amount) > event.ticketsTotal) {
-      throw new BadRequestException(
-        `Cannot mint ${amount} tickets. Event can only have ${event.ticketsTotal} tickets total. Currently has ${currentTickets}`,
-      );
+    if (!eventWithZones) {
+      throw new NotFoundException('Event not found');
     }
-
-    // Obtener la dirección del comprador
+  
+    // Validación de zonas
+    if (eventWithZones.zones.length > 0) {
+      if (!zones || zones.length !== amount) {
+        throw new BadRequestException(`Must specify exactly ${amount} zones`);
+      }
+  
+      for (const zoneName of zones) {
+        const zone = eventWithZones.zones.find(z => z.name === zoneName);
+        if (!zone) {
+          throw new NotFoundException(`Zone "${zoneName}" not found`);
+        }
+        if (zone.sold >= zone.capacity) {
+          throw new BadRequestException(`Zone "${zone.name}" is sold out`);
+        }
+      }
+    }
+  
+    // Buyer
     let buyerAddress = buyerWalletAddress;
+    let buyerUser;
+  
     if (!buyerAddress) {
-      const buyer = await this.prisma.user.findUnique({ where: { id: userId } });
-      if (!buyer) {
-        throw new NotFoundException('Buyer not found');
+      buyerUser = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!buyerUser?.walletAddress) {
+        throw new BadRequestException('Buyer wallet required');
       }
-      if(!buyer.walletAddress){
-        throw new BadRequestException('Buyer address is required');
-      }
-      buyerAddress = buyer.walletAddress;
-      if(!buyerAddress){
-        throw new BadRequestException('Buyer address is required');
-      }
+      buyerAddress = buyerUser.walletAddress;
     } else {
-      // Validar que el buyerWalletAddress existe en la DB
-      const buyer = await this.prisma.user.findUnique({
+      buyerUser = await this.prisma.user.findUnique({
         where: { walletAddress: buyerAddress },
       });
-      if (!buyer) {
-        throw new NotFoundException(`Buyer with wallet address ${buyerAddress} not found`);
+      if (!buyerUser) {
+        throw new NotFoundException('Buyer not found');
       }
     }
-
-    try {
-      // Mintear tickets en blockchain
-      this.logger.log(`Minting ${amount} tickets for event ${event.blockchainEventId}`);
-      const blockchainResult = await this.blockchainActions.mintTickets(
-        BigInt(event.blockchainEventId),
-        buyerAddress,
-        BigInt(amount),
-        zones || [],
+  
+    // 🔑 MAP ZONAS
+    const zoneMap = new Map(
+      eventWithZones.zones.map(z => [z.name, z.id]),
+    );
+  
+    // 🔥 CREAR TICKETS EN DB (PENDING)
+    await this.prisma.$transaction(async tx => {
+      // 1️⃣ Crear tickets
+      await Promise.all(
+        zones!.map(zoneName =>
+          tx.ticket.create({
+            data: {
+              blockchainTicketId: `pending-${randomUUID()}`,
+              eventId: event.id,
+              zoneId: zoneMap.get(zoneName)!,
+              ownerId: buyerUser.id,
+              originalBuyerId: buyerUser.id,
+              mintedAt: new Date(),
+              status: TicketStatus.ACTIVE,
+            },
+          }),
+        ),
       );
+    
+      // 2️⃣ Contar tickets por zona
+      const zoneCounter = new Map<string, number>();
+    
+      for (const zoneName of zones!) {
+        const zoneId = zoneMap.get(zoneName)!;
+        zoneCounter.set(zoneId, (zoneCounter.get(zoneId) || 0) + 1);
+      }
+    
+      // 3️⃣ Incrementar sold por zona
+      for (const [zoneId, count] of zoneCounter.entries()) {
+        await tx.eventZone.update({
+          where: { id: zoneId },
+          data: {
+            sold: {
+              increment: count,
+            },
+          },
+        });
+      }
+    });
+  
 
-      this.logger.log(`Tickets minted on blockchain: ${blockchainResult.hash}`);
-
-      return {
-        success: true,
-        message: 'Tickets are being minted. They will appear in your account once the transaction is confirmed.',
-        blockchainTxHash: blockchainResult.hash,
-        blockHash: blockchainResult.blockHash,
-        amount,
-        eventId: event.id,
-        blockchainEventId: event.blockchainEventId,
-      };
-    } catch (error) {
-      this.logger.error(`Error minting tickets:`, error);
-      throw new BadRequestException(`Failed to mint tickets on blockchain: ${error.message}`);
+    if(!buyerAddress) {
+      throw new BadRequestException('Buyer wallet required');
     }
+    // ⛓️ MINT EN BLOCKCHAIN
+    const blockchainResult = await this.blockchainActions.mintTickets(
+      BigInt(event.blockchainEventId),
+      buyerAddress,
+      BigInt(amount),
+      zones!,
+    );
+  
+    return {
+      success: true,
+      blockchainTxHash: blockchainResult.hash,
+      blockHash: blockchainResult.blockHash,
+    };
   }
 
   async getEventStats(eventId: string, userId?: string) {
-    // Obtener evento directamente de Prisma (sin serializar) para trabajar con BigInt
+    // Obtener evento CON zonas incluidas
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
+      include: {
+        zones: true, // ¡IMPORTANTE! Incluir las zonas
+      },
     });
-
+  
     if (!event) {
       throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
-
+  
     // Verificar permisos para estadísticas detalladas
     if (userId && event.organizerId !== userId) {
       const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -431,7 +548,7 @@ export class EventsService {
         return this.getPublicStats(event);
       }
     }
-
+  
     // Estadísticas completas para organizador/admin
     const [
       totalTickets,
@@ -456,15 +573,32 @@ export class EventsService {
         where: { ticket: { eventId: event.id }, status: 'ACTIVE' },
       }),
     ]);
-
-    // Convertir a BigInt para cálculos
-    const ticketsTotal = typeof event.ticketsTotal === 'bigint' ? event.ticketsTotal : BigInt(event.ticketsTotal);
+  
+    // Calcular ticketsTotal sumando las capacidades de todas las zonas
+    const ticketsTotal = event.zones.reduce((total, zone) => {
+      const capacity = typeof zone.capacity === 'bigint' ? zone.capacity : BigInt(zone.capacity);
+      return total + capacity;
+    }, BigInt(0));
+  
     const ticketsMinted = BigInt(totalTickets);
     const ticketsRemaining = ticketsTotal - ticketsMinted; 
     const mintPercentage = ticketsTotal > 0n
       ? Number((ticketsMinted * 100n) / ticketsTotal)
       : 0;
-
+  
+    // También calcular estadísticas por zona
+    const zoneStats = event.zones.map(zone => ({
+      id: zone.id,
+      name: zone.name,
+      capacity: zone.capacity.toString(),
+      sold: zone.sold.toString(),
+      available: (BigInt(zone.capacity) - BigInt(zone.sold)).toString(),
+      price: Number(zone.price),
+      soldPercentage: zone.capacity > 0n
+        ? Number((BigInt(zone.sold) * 100n) / BigInt(zone.capacity))
+        : 0,
+    }));
+  
     return {
       eventId: event.id,
       blockchainEventId: event.blockchainEventId,
@@ -479,6 +613,9 @@ export class EventsService {
       totalListings: listedTickets,
       soldListings,
       activeListings,
+      // Nuevas estadísticas por zona
+      zones: zoneStats,
+      zoneCount: event.zones.length,
       eventStartTime: event.eventStartTime,
       resaleEnabled: event.resaleEnabled,
       active: event.active,
@@ -491,7 +628,9 @@ export class EventsService {
     const totalTickets = await this.prisma.ticket.count({ where: { eventId: event.id } });
     
     // Convertir a BigInt para cálculos
-    const ticketsTotal = typeof event.ticketsTotal === 'bigint' ? event.ticketsTotal : BigInt(event.ticketsTotal);
+    const ticketsTotal = event.zones && Array.isArray(event.zones) ? event.zones.reduce((total, zone) => {
+      return total + BigInt(zone.capacity);
+    }, BigInt(0)) : BigInt(0);
     const ticketsMinted = BigInt(totalTickets);
     const ticketsRemaining = ticketsTotal - ticketsMinted;
 
