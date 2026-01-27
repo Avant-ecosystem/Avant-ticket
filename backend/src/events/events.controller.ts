@@ -94,5 +94,46 @@ export class EventsController {
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: any) {
     return this.eventsService.remove(id, user.id);
   }
+
+    /**
+   * Asignar staff (scanner) a un evento
+   * Solo ORGANIZER del evento o ADMIN
+   */
+  @Post(':id/staff')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ORGANIZER', 'ADMIN')
+  @HttpCode(HttpStatus.CREATED)
+  addStaffToEvent(
+    @Param('id', ParseUUIDPipe) eventId: string,
+    @Body('staffEmail') staffEmail: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.eventsService.addStaffToEvent(
+      eventId,
+      user.id,
+      staffEmail,
+    );
+  }
+
+  /**
+   * Eventos asignados al staff logueado
+   * (Scanner app)
+   */
+  @Get('staff/me')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SCANNER', 'ADMIN')
+  @HttpCode(HttpStatus.OK)
+  getMyStaffEvents(@CurrentUser() user: any) {
+    return this.eventsService.findEventsByStaff(user.id);
+  }
+  
+
+  @Get(':eventId/tickets')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SCANNER', 'ADMIN')
+  @HttpCode(HttpStatus.OK)
+  async getEventTickets(@Param('eventId') eventId: string) {
+    return this.eventsService.getTicketsForSync(eventId);
+  }
 }
 

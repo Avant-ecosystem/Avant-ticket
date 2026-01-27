@@ -12,6 +12,9 @@ import { ScannerModule } from './scanner/scanner.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { CommonModule } from './common/common.module';
 
+import { WebhooksController } from './webhooks/webhooks.controller';
+import { MercadoPagoModule } from './mercado-pago/mercado-pago.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -27,8 +30,10 @@ import { CommonModule } from './common/common.module';
     MarketplaceModule,
     ScannerModule,
     BlockchainModule,
+    MercadoPagoModule,
+
   ],
-  controllers: [AppController],
+  controllers: [AppController, WebhooksController],
   providers: [AppService],
 })
 export class AppModule {}

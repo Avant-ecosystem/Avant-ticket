@@ -232,7 +232,11 @@ export class MarketplaceService {
           include: {
             zone: true,
             event: true,
-            owner: true,
+            owner:{
+              select:{
+                createdAt:true
+              }
+            }
           },
         },
         seller: {
@@ -247,6 +251,7 @@ export class MarketplaceService {
             id: true,
             walletAddress: true,
             username: true,
+
           },
         },
       },

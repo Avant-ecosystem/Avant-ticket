@@ -252,6 +252,74 @@ export class TicketsService {
     };
   }
 
+  async markTicketsAsUsedBatch(
+    eventId: string,
+    ticketIds: string[],
+  ) {
+    if (!ticketIds.length) {
+      throw new BadRequestException('Ticket IDs array cannot be empty');
+    }
+  
+    // Obtener tickets válidos del evento
+    const tickets = await this.prisma.ticket.findMany({
+      where: {
+        blockchainTicketId: { in: ticketIds },
+        eventId,
+      },
+      select: {
+        id: true,
+        status: true,
+        blockchainTicketId: true,
+      },
+    });
+  
+    if (tickets.length !== ticketIds.length) {
+      throw new NotFoundException(
+        'One or more tickets do not exist or do not belong to this event',
+      );
+    }
+  
+    const alreadyUsed = tickets.filter(t => t.status === TicketStatus.USED);
+    if (alreadyUsed.length > 0) {
+      throw new BadRequestException(
+        `Some tickets are already used: ${alreadyUsed.map(t => t.id).join(', ')}`,
+      );
+    }
+  
+    try {
+      // 🔗 Opcional: marcar en blockchain (uno por uno, no hay batch on-chain)
+      for (const ticket of tickets) {
+        if (ticket.blockchainTicketId) {
+          await this.blockchainActions.markTicketUsed(
+            BigInt(ticket.blockchainTicketId),
+          );
+        }
+      }
+  
+      // 🧠 Update masivo en DB
+      const result = await this.prisma.ticket.updateMany({
+        where: {
+          blockchainTicketId: { in: ticketIds },
+          eventId,
+        },
+        data: {
+          status: TicketStatus.USED,
+          usedAt: new Date(),
+        },
+      });
+  
+      return {
+        updated: result.count,
+        message: 'Tickets marked as used successfully',
+      };
+    } catch (error) {
+      this.logger.error('Error marking tickets as used in batch', error);
+      throw new BadRequestException(
+        `Failed to mark tickets as used: ${error.message}`,
+      );
+    }
+  }
+
   async findOne(id: string) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { id },

@@ -8,6 +8,8 @@ import {
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
+  Body,
+  Post,
 } from '@nestjs/common';
 import { TicketsService } from './tickets.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -60,6 +62,17 @@ export class TicketsController {
     return this.ticketsService.getStats(user?.id);
   }
 
+  @Post(':eventId/mark-used')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'ORGANIZER','STAFF')
+  @HttpCode(HttpStatus.OK)
+markUsedBatch(
+  @Param('eventId') eventId: string,
+  @Body('ticketIds') ticketIds: string[],
+) {
+  return this.ticketsService.markTicketsAsUsedBatch(eventId, ticketIds);
+}
+
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
@@ -78,8 +91,9 @@ export class TicketsController {
     if (ticket.ownerId !== user.id) {
       throw new ForbiddenException('You can only view your own ticket QR codes');
     }
-    const qrData = this.qrService.generateQrData(ticket.blockchainTicketId);
-    const qrImage = await this.qrService.generateQrCode(ticket.blockchainTicketId);
+    
+    const qrData = this.qrService.generateQrData(ticket.blockchainTicketId,ticket.eventId);
+    const qrImage = await this.qrService.generateQrCode(ticket.blockchainTicketId,ticket.eventId);
     return {
       qrData,
       qrImage,

@@ -125,6 +125,7 @@ pub enum Event {
         ticket_ids: Vec<U256>,
         buyer: ActorId,
         amount: U256,
+        zones: Vec<Option<String>>,
     },
     /// Ticket revendido
     TicketResold {
@@ -424,6 +425,7 @@ impl TicketService {
         // Crear tickets
         let mut ticket_ids = Vec::new();
         let mut zones_iter = zones.into_iter();
+        let mut zones_emitted = Vec::new();
         
         for _ in 0..amount.as_u64() {
             storage.ticket_id_counter += U256::one();
@@ -431,6 +433,9 @@ impl TicketService {
             
             let zone = zones_iter.next().flatten();
             let current_time = self.current_timestamp();
+
+
+            zones_emitted.push(zone.clone());
             
             let ticket = Ticket {
                 ticket_id,
@@ -471,7 +476,7 @@ impl TicketService {
         }
         
         // Llamar al contrato VMT para mintear los NFTs
-        let mint_request = vmt_io::MintBatch::encode_call(buyer, token_ids, amounts, metadata_vec);
+        let mint_request = vmt_io::MintBatch::encode_params_with_prefix("Vmt",buyer, token_ids, amounts, metadata_vec);
         msg::send_bytes_for_reply(storage.vmt_contract_id, mint_request, 0, 5_000_000_000)
             .expect("Error sending mint request to VMT contract")
             .await
@@ -482,6 +487,7 @@ impl TicketService {
             ticket_ids: ticket_ids.clone(),
             buyer,
             amount,
+            zones: zones_emitted,
         })
         .expect("Failed to emit TicketsMinted");
         
@@ -589,7 +595,8 @@ impl TicketService {
         }
         
         // Transferir el NFT del vendedor al comprador usando VMT
-        let transfer_request = vmt_io::TransferFrom::encode_call(
+        let transfer_request = vmt_io::TransferFrom::encode_params_with_prefix(
+            "Vmt",
             ticket.current_owner,
             buyer,
             ticket_id,
@@ -918,7 +925,7 @@ fn current_timestamp(&self) -> u64 {
 impl MarketService {
     /// Listar un ticket para reventa en el Marketplace
     #[export]
-    pub async fn list_ticket(&mut self, ticket_id: U256, price: U256) {
+    pub async fn list_ticket(&mut self,seller: ActorId, ticket_id: U256, price: U256) {
         self.non_reentrant();
         
         if price == U256::zero() {
@@ -926,7 +933,6 @@ impl MarketService {
             panic(TicketError::InvalidPrice);
         }
         
-        let seller = msg::source();
         if seller == ZERO_ID {
             self.unlock();
             panic(TicketError::InvalidInput);
@@ -1021,10 +1027,9 @@ impl MarketService {
     
     /// Comprar un ticket listado en el Marketplace
     #[export]
-    pub async fn buy_ticket(&mut self, ticket_id: U256) {
+    pub async fn buy_ticket(&mut self, buyer: ActorId, ticket_id: U256) {
         self.non_reentrant();
         
-        let buyer = msg::source();
         if buyer == ZERO_ID {
             self.unlock();
             panic(TicketError::InvalidInput);
@@ -1107,7 +1112,8 @@ impl MarketService {
         }
         
         // Transferir el NFT del vendedor al comprador usando VMT
-        let transfer_request = vmt_io::TransferFrom::encode_call(
+        let transfer_request = vmt_io::TransferFrom::encode_params_with_prefix(
+            "Vmt",
             seller,
             buyer,
             ticket_id,
@@ -1143,9 +1149,7 @@ impl MarketService {
     
     /// Cancelar un listado activo
     #[export]
-    pub fn cancel_listing(&mut self, ticket_id: U256) {
-        let seller = msg::source();
-        
+    pub fn cancel_listing(&mut self, seller: ActorId, ticket_id: U256) {
         let storage = self.get_mut();
         
         // Obtener listado

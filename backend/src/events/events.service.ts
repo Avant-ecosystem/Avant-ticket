@@ -6,7 +6,7 @@ import { BlockchainActionsService } from '../blockchain/blockchain-actions.servi
 import { decodeAddress } from '@polkadot/util-crypto';
 import { Decimal } from '@prisma/client/runtime/index-browser';
 import { TicketStatus } from '@prisma/client';
-import { randomUUID } from 'crypto';
+import { randomUUID ,createHash} from 'crypto';
 
 @Injectable()
 export class EventsService {
@@ -356,6 +356,119 @@ export class EventsService {
     return this.serializeEvent(event);
   }
 
+  async addStaffToEvent(
+  eventId: string,
+  requesterId: string,
+  staffEmail: string,
+) {
+  const event = await this.prisma.event.findUnique({
+    where: { id: eventId },
+  });
+
+  if (!event) {
+    throw new NotFoundException('Event not found');
+  }
+
+  const requester = await this.prisma.user.findUnique({
+    where: { id: requesterId },
+  });
+
+  if (!requester) {
+    throw new NotFoundException('Requester not found');
+  }
+
+  // 🔐 Permisos
+  if (
+    event.organizerId !== requesterId &&
+    requester.role !== 'ADMIN'
+  ) {
+    throw new ForbiddenException('You cannot assign staff to this event');
+  }
+  
+  if (!staffEmail) {
+  throw new BadRequestException('staffEmail is required');
+}
+
+  // 🔎 Buscar staff por EMAIL
+  const staff = await this.prisma.user.findUnique({
+    where: { email: staffEmail.toLowerCase() },
+  });
+
+  if (!staff) {
+    throw new NotFoundException('Staff user not found');
+  }
+
+  if (!['SCANNER', 'ADMIN'].includes(staff.role)) {
+    throw new BadRequestException('User is not allowed to be staff');
+  }
+
+  // 🚫 Evitar duplicados
+  const alreadyAssigned = await this.prisma.eventStaff.findUnique({
+    where: {
+      eventId_staffId: {
+        eventId,
+        staffId: staff.id, // 👈 ID real
+      },
+    },
+  });
+
+  if (alreadyAssigned) {
+    throw new BadRequestException('Staff already assigned to this event');
+  }
+
+  // ✅ Crear relación
+  await this.prisma.eventStaff.create({
+    data: {
+      eventId,
+      staffId: staff.id, // 👈 SIEMPRE ID
+    },
+  });
+
+  return {
+    success: true,
+    eventId,
+    staffId: staff.id,
+    staffEmail: staff.email,
+  };
+}
+
+async findEventsByStaff(staffId: string) {
+  const staff = await this.prisma.user.findUnique({
+    where: { id: staffId },
+  });
+
+  if (!staff) {
+    throw new NotFoundException('Staff not found');
+  }
+
+  if (!['SCANNER', 'ADMIN'].includes(staff.role)) {
+    throw new ForbiddenException('User is not staff');
+  }
+
+  const events = await this.prisma.event.findMany({
+    where: {
+      staffAssignments: {
+        some: {
+          staffId,
+        },
+      },
+    },
+    include: {
+      zones: true,
+      _count: {
+        select: {
+          tickets: true,
+        },
+      },
+    },
+    orderBy: {
+      eventStartTime: 'asc',
+    },
+  });
+
+  return events.map(event => this.serializeEvent(event));
+}
+
   async findByBlockchainId(blockchainEventId: string) {
     const event = await this.prisma.event.findUnique({
       where: { blockchainEventId },
@@ -468,14 +581,35 @@ export class EventsService {
       eventWithZones.zones.map(z => [z.name, z.id]),
     );
   
-    // 🔥 CREAR TICKETS EN DB (PENDING)
+    // Idempotencia básica: evitar compras duplicadas simultáneas del mismo comprador para el mismo evento
+    const recentPendingCount = await this.prisma.ticket.count({
+      where: {
+        eventId: event.id,
+        ownerId: buyerUser.id,
+        blockchainTicketId: { startsWith: 'pending-' },
+        createdAt: { gte: new Date(Date.now() - 90 * 1000) },
+      },
+    });
+    if (recentPendingCount > 0) {
+      throw new BadRequestException('Ya hay una compra de tickets en proceso. Por favor espera unos segundos.');
+    }
+
+    
+    // 🔥 CREAR TICKETS EN DB (PENDING) y preparar contadores por zona
+    const requestId = randomUUID();
+    const zoneCounter = new Map<string, number>();
+    for (const zoneName of zones!) {
+      const zoneId = zoneMap.get(zoneName)!;
+      zoneCounter.set(zoneId, (zoneCounter.get(zoneId) || 0) + 1);
+    }
+
     await this.prisma.$transaction(async tx => {
       // 1️⃣ Crear tickets
       await Promise.all(
         zones!.map(zoneName =>
           tx.ticket.create({
             data: {
-              blockchainTicketId: `pending-${randomUUID()}`,
+              blockchainTicketId: `pending-${requestId}-${randomUUID()}`,
               eventId: event.id,
               zoneId: zoneMap.get(zoneName)!,
               ownerId: buyerUser.id,
@@ -486,16 +620,8 @@ export class EventsService {
           }),
         ),
       );
-    
-      // 2️⃣ Contar tickets por zona
-      const zoneCounter = new Map<string, number>();
-    
-      for (const zoneName of zones!) {
-        const zoneId = zoneMap.get(zoneName)!;
-        zoneCounter.set(zoneId, (zoneCounter.get(zoneId) || 0) + 1);
-      }
-    
-      // 3️⃣ Incrementar sold por zona
+
+      // 2️⃣ Incrementar sold por zona
       for (const [zoneId, count] of zoneCounter.entries()) {
         await tx.eventZone.update({
           where: { id: zoneId },
@@ -512,13 +638,39 @@ export class EventsService {
     if(!buyerAddress) {
       throw new BadRequestException('Buyer wallet required');
     }
-    // ⛓️ MINT EN BLOCKCHAIN
-    const blockchainResult = await this.blockchainActions.mintTickets(
-      BigInt(event.blockchainEventId),
-      buyerAddress,
-      BigInt(amount),
-      zones!,
-    );
+    // ⛓️ MINT EN BLOCKCHAIN con rollback si falla
+    let blockchainResult;
+    try {
+      blockchainResult = await this.blockchainActions.mintTickets(
+        BigInt(event.blockchainEventId),
+        buyerAddress,
+        BigInt(amount),
+        zones!,
+      );
+    } catch (chainError) {
+      // Compensar: eliminar tickets pendientes creados y revertir sold por zona
+      await this.prisma.$transaction(async tx => {
+        await tx.ticket.deleteMany({
+          where: {
+            eventId: event.id,
+            ownerId: buyerUser.id,
+            blockchainTicketId: { startsWith: `pending-${requestId}-` },
+          },
+        });
+
+        for (const [zoneId, count] of zoneCounter.entries()) {
+          await tx.eventZone.update({
+            where: { id: zoneId },
+            data: {
+              sold: {
+                decrement: count,
+              },
+            },
+          });
+        }
+      });
+      throw chainError;
+    }
   
     return {
       success: true,
@@ -582,8 +734,9 @@ export class EventsService {
   
     const ticketsMinted = BigInt(totalTickets);
     const ticketsRemaining = ticketsTotal - ticketsMinted; 
-    const mintPercentage = ticketsTotal > 0n
-      ? Number((ticketsMinted * 100n) / ticketsTotal)
+    const mintPercentage =
+    ticketsTotal > 0n
+      ? (Number(ticketsMinted) / Number(ticketsTotal)) * 100
       : 0;
   
     // También calcular estadísticas por zona
@@ -594,8 +747,9 @@ export class EventsService {
       sold: zone.sold.toString(),
       available: (BigInt(zone.capacity) - BigInt(zone.sold)).toString(),
       price: Number(zone.price),
-      soldPercentage: zone.capacity > 0n
-        ? Number((BigInt(zone.sold) * 100n) / BigInt(zone.capacity))
+      soldPercentage:
+      Number(zone.capacity) > 0
+        ? (Number(zone.sold) / Number(zone.capacity)) * 100
         : 0,
     }));
   
@@ -644,6 +798,42 @@ export class EventsService {
       resaleEnabled: event.resaleEnabled,
       active: event.active,
     };
+  }
+
+  private buildTicketSignature(
+    blockchainTicketId: string,
+    eventSecret: string,
+  ): string {
+    return createHash('sha256')
+      .update(`${blockchainTicketId}:${eventSecret}`)
+      .digest('hex');
+  }
+  
+  async getTicketsForSync(eventId: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: {
+        tickets: true,
+      },
+    });
+  
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+  
+    if (!event.metadataHash) {
+      throw new BadRequestException('Event has no metadataHash');
+    }
+  
+    return event.tickets.map(ticket => ({
+      ticketId: ticket.blockchainTicketId,
+      eventId: event.id,
+      signature: this.buildTicketSignature(
+        ticket.blockchainTicketId,
+        event.metadataHash,
+      ),
+      status: ticket.status === TicketStatus.USED ? 'used' : 'unused',
+    }));
   }
 }
 

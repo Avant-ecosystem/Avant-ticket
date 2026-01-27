@@ -104,6 +104,7 @@ export class AuthService {
     };
   }
 
+
   async register(registerDto: RegisterDto) {
     // 1️⃣ Validar email único
     const existingEmail = await this.usersService.findByEmail(registerDto.email);
