@@ -33,6 +33,7 @@ enum PaymentStatus {
   REFUNDED
   PROCESSING
   FAILED
+  COMPLETED
 }
 
 enum MintJobStatus {
@@ -45,8 +46,12 @@ enum MintJobStatus {
 model Payment {
   id                 String @id @default(uuid())
 
-  mpPreferenceId     String @unique
+  mpPreferenceId     String? @unique
   mpPaymentId        String? @unique
+  
+  amplifyPaymentId   String? @unique
+  oxapayPaymentId    String? @unique
+
   mpMerchantOrderId  String?
 
   externalReference  String @unique

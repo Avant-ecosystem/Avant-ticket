@@ -14,6 +14,9 @@ import { CommonModule } from './common/common.module';
 
 import { WebhooksController } from './webhooks/webhooks.controller';
 import { MercadoPagoModule } from './mercado-pago/mercado-pago.module';
+import { PaymentsModule } from './payments/payments.module';
+import { AmplifyModule } from './amplify/amplify.module';
+import { OxapayModule } from './oxapay/oxapay.module';
 
 @Module({
   imports: [
@@ -31,6 +34,9 @@ import { MercadoPagoModule } from './mercado-pago/mercado-pago.module';
     ScannerModule,
     BlockchainModule,
     MercadoPagoModule,
+    PaymentsModule,
+    AmplifyModule,
+    OxapayModule,
 
   ],
   controllers: [AppController, WebhooksController],

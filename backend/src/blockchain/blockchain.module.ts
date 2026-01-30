@@ -7,6 +7,7 @@ import { BlockchainWorkerService } from './blockchain-worker.service';
 import { BlockchainEventListenerService } from './blockchain-event-listener.service';
 import { BlockchainController } from './blockchain.controller';
 import { PrismaModule } from '../prisma/prisma.module';
+import { ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PrismaModule } from '../prisma/prisma.module';
     BlockchainWorkerService,
     BlockchainActionsService,
     BlockchainEventListenerService,
+    ConfigService,
   ],
   exports: [
     BlockchainConnectionService,
@@ -27,6 +29,7 @@ import { PrismaModule } from '../prisma/prisma.module';
     BlockchainWorkerService,
     BlockchainActionsService,
     BlockchainEventListenerService,
+    ConfigService,
   ],
 })
 export class BlockchainModule {}

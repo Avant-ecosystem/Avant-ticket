@@ -87,4 +87,13 @@ export class MercadoPagoController {
         preference.sandbox_init_point,
     };
   }
+// ======================================================
+// WEBHOOK
+// ======================================================
+@Post('webhook')
+async webhook(@Body() body: any) {
+  
+  await this.mercadoPagoService.handleWebhook(body);
+  return { received: true };
+}
 }

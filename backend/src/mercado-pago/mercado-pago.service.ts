@@ -2,11 +2,18 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 import axios from 'axios';
+import { EventsService } from 'src/events/events.service';
 import * as crypto from 'crypto';
+import { BlockchainWorkerService } from 'src/blockchain/blockchain-worker.service';
 
 @Injectable()
 export class MercadoPagoService {
-  constructor(private readonly prisma: PrismaService) {}
+
+ constructor(
+  private readonly prisma: PrismaService,
+  private readonly blockchainWorker: BlockchainWorkerService,
+  private readonly eventsService: EventsService,
+) {}
 
   // ======================================================
   // ALIASES PARA TU CONTROLLER
@@ -216,22 +223,139 @@ async getMarketplaceStatus(organizerId: string) {
       },
     });
 
-    await this.prisma.payment.create({
-      data: {
-        mpPreferenceId: pref.id!,
-        externalReference,
-        orderId: crypto.randomUUID(),
-        userId: buyer.id,
-        organizerId: organizer.id,
-        eventId: event.id,
-        amount: BigInt(totalAmount),
-        platformFee: BigInt(platformFee),
-        organizerAmount: BigInt(totalAmount - platformFee),
-        idempotencyKey: crypto.randomUUID(),
-        status: 'PENDING',
-      },
-    });
+ const platformFeeRounded = Math.round(platformFee);
+const organizerAmount = totalAmount - platformFeeRounded;   
+await this.prisma.payment.create({
+  data: {
+    mpPreferenceId: pref.id!,
+    externalReference,
+    orderId: crypto.randomUUID(),
+
+    userId: buyer.id,
+    organizerId: organizer.id,
+    eventId: event.id,
+
+    amount: BigInt(totalAmount),
+    platformFee: BigInt(platformFeeRounded),
+    organizerAmount: BigInt(organizerAmount),
+
+    currency: 'ARS',
+    status: 'PENDING',
+    idempotencyKey: crypto.randomUUID(),
+
+    items: {
+      create: items.map(i => ({
+        zoneId: i.zoneId,
+        quantity: i.quantity,
+        unitPrice: BigInt(i.unitPrice),
+        subtotal: BigInt(i.unitPrice * i.quantity),
+      })),
+    },
+  },
+});
 
     return pref;
   }
+  // ======================================================
+// WEBHOOK
+// ======================================================
+async handleWebhook(body: any) {
+  // Mercado Pago manda muchos eventos, filtramos solo payment
+  if (body.type !== 'payment' || !body.data?.id) {
+    return { received: true };
+  }
+
+  const mpPaymentId = body.data.id.toString();
+
+  // Consultamos el pago real a MP (source of truth)
+  const { data: mpPayment } = await axios.get(
+    `https://api.mercadopago.com/v1/payments/${mpPaymentId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+      },
+    },
+  );
+
+  if (!mpPayment.external_reference) {
+    return { ok: true };
+  }
+
+const payment = await this.prisma.payment.findUnique({
+  where: { externalReference: mpPayment.external_reference },
+  include: {
+    items: true,
+    event: { include: { zones: true } },
+  },
+});
+
+  if (!payment) {
+    return { ok: true };
+  }
+
+  // ⛔ Idempotencia dura
+  if (
+    payment.status === 'APPROVED' ||
+    payment.status === 'COMPLETED'
+  ) {
+    return { ok: true };
+  }
+
+  // ============================
+  // PAYMENT APPROVED
+  // ============================
+  if (mpPayment.status === 'approved') {
+  // 1) Guardar estado APPROVED con datos de MP
+  await this.prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      status: 'APPROVED',
+      mpPaymentId,
+      mpStatusDetail: mpPayment.status_detail,
+      rawWebhook: body,
+    },
+  });
+  // 2) Preparar datos de minteo
+  const totalTickets = payment.items.reduce(
+    (acc, it) => acc + Number(it.quantity),
+    0,
+  );
+  let zonesNames: string[] | undefined = undefined;
+  const eventZones = payment.event?.zones ?? [];
+  if (eventZones.length > 0) {
+    const zoneIdToName = new Map(eventZones.map(z => [z.id, z.name] as const));
+    zonesNames = [];
+    for (const it of payment.items) {
+      if (!it.zoneId) continue;
+      const name = zoneIdToName.get(it.zoneId);
+      if (name) {
+        for (let i = 0; i < Number(it.quantity); i++) zonesNames.push(name);
+      }
+    }
+  }
+  const buyerUser = await this.prisma.user.findUnique({ where: { id: payment.userId } });
+  const buyerWalletAddress = buyerUser?.walletAddress;
+  if(!buyerWalletAddress) {
+    throw new Error('User wallet address not found');
+  }
+  
+  // 3) Mintear directamente
+  await this.eventsService.mintTickets(
+    payment.eventId,
+    payment.userId,
+    totalTickets,
+    buyerWalletAddress,
+    zonesNames,
+  );
+  // 4) Marcar COMPLETED
+  await this.prisma.payment.update({
+    where: { id: payment.id },
+    data: { status: 'COMPLETED' },
+  });
+  return { ok: true };
 }
+
+}
+  }
+
+  
